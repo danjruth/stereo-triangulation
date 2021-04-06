@@ -6,7 +6,7 @@ Created on Wed Mar 24 16:03:49 2021
 """
 
 import numpy as np
-from .. import coefs_to_points, apply_transformation_matrix
+from stereo.camera import coefs_to_points
 import scipy.optimize
 import pandas as pd
 
@@ -23,7 +23,6 @@ class StereoSystem:
     
     def __init__(self,calib_A,calib_B):        
         self.calibs = [calib_A,calib_B]        
-        self.object_points = calib_A.object_points # assuming its the same as calib_B.object_points
         
     def find_shortest_connection(self,xy_A,xy_B):        
         '''
@@ -31,7 +30,7 @@ class StereoSystem:
         connection the two rays.
         '''
         coefs_A = self.calibs[0].linear_ray_coefs(xy_A[0],xy_A[1])
-        coefs_B = self.calibs[1].linear_ray_coefs(xy_B[0],xy_B[1])        
+        coefs_B = self.calibs[1].linear_ray_coefs(xy_B[0],xy_B[1])
         return shortest_connection_two_rays(coefs_A,coefs_B)
     
     def __call__(self,xy_A,xy_B):
@@ -42,33 +41,6 @@ class StereoSystem:
         connection = self.find_shortest_connection(xy_A,xy_B)
         return connection_midpoint(connection), connection_dist(connection)
     
-    def pair_2d_trajectories(self,df_A,df_B,dist_thresh=0.005):
-        '''
-        Combine two 2D trajectories into a single 3D trajectory, and calculate
-        the velocity components and magnitude. At this point, switch back to
-        the lower-case x,y,z convention for 3D physical coordinates.
-        '''
-        
-        # create the dataframe
-        df = pd.DataFrame(index=df_A.index.intersection(df_B.index),columns=['x','y','z','err'])
-        
-        # get the 3D location and the uncertainty in the position
-        for t in df.index:
-            loc,dist = self((df_A.loc[t,'x'],df_A.loc[t,'y']),(df_B.loc[t,'x'],df_B.loc[t,'y']))
-            
-            # if the error is too large, give up on this pairing
-            if dist>dist_thresh:
-                df['err'] = np.inf
-                break
-            df.loc[t,['x','y','z']] = loc
-            df.loc[t,'err'] = dist
-            for df_let,let in zip([df_A,df_B],['A','B']):
-                df['d_px_'+let] = df_let['d_px']
-                df['x_'+let] = df_let['x']
-                df['y_'+let] = df_let['y']
-            
-        return df
-
 def shortest_connection_two_rays(coefs_A,coefs_B):
     '''
     Get the closest point between two lines, each defined as a function of Y.
@@ -130,8 +102,187 @@ def minimize_dist_n_lines(linear_ray_coefs):
     
     return res.x,err(res.x)
         
+DEFAULT_MATCH_PARAMS = {'ray_sep_thresh':1e-3, # [m], separation between rays
+                        'rel_size_error_thresh':0.5, # max allowable of abs(d_A-d_B)/(0.5*(d_A+d_B))
+                        'min_d_for_rel_size_criteria':1e-3, # [m], value of 0.5*(d_A+d_B) below which rel_size_error_thresh is not applied
+                        }
     
+class Matcher:
+    
+    def __init__(self,df_A,df_B,stereo_system,params={}):
+        
+        self.df_A = df_A
+        self.df_B = df_B
+        self.stereo_system = stereo_system
+        
+        # set matcher params
+        self.params = DEFAULT_MATCH_PARAMS.copy()
+        for key in params:
+            self.params[key] = params[key]
+            
+        # initialize arrays in which pairing data will be stored
+        self.locs = np.zeros((len(df_A),len(df_B),3)).astype(float)
+        self.errs = np.zeros((len(df_A),len(df_B))).astype(float)
+        self.mask = np.ones_like(self.errs).astype(float)
+        self.diameters = np.zeros_like(self.errs)
+        self.diameter_diffs = np.zeros_like(self.errs)
+            
+    def _get_all_pairings(self):
+        '''With n_A and n_B rows in df_A and df_B, compute the n_A x n_B 
+        pairings (the location and error associated with each)
+        '''
+        
+        df_A = self.df_A
+        df_B = self.df_B
+        
+        # get the pairing positions and errors for each combination
+        for aii,ai in enumerate(df_A.index):
+            for bii,bi in enumerate(df_B.index):
+                self.locs[aii,bii,:],self.errs[aii,bii] = self.stereo_system((df_A.loc[ai,'x'],df_A.loc[ai,'y']),(df_B.loc[bi,'x'],df_B.loc[bi,'y']))
 
+    def _mask_on_error(self):
+        '''set the mask to nan for pairings for which the error is too large
+        '''
+        is_bad_pos = self.errs > self.params['ray_sep_thresh']
+        self.mask[is_bad_pos] = np.nan
+        
+    def _apply_mask(self):
+        '''multiply a bunch of arrays by the mask to nan-out masked pairings
+        '''
+        attrs = ['locs','errs','diameter_means','diameter_diffs']
+        for attr in attrs:
+            setattr(self,attr,(getattr(self,attr).T*self.mask.T).T)
+    
+    def _get_all_diameters(self):
+        '''Compute all the diameters for each pairing that is not currently
+        masked'''
+        df_A,df_B = self.df_A, self.df_B
+        calib_A, calib_B = self.stereo_system.calibs
+        # get the diameter of each object given each pairing
+        d_A = np.zeros_like(self.mask) * np.nan
+        d_B = np.zeros_like(self.mask) * np.nan
+        for aii,ai in enumerate(df_A.index):
+            d_A_px = df_A.loc[ai,'d_px']
+            for bii,bi in enumerate(df_B.index):
+                d_B_px = df_B.loc[bi,'d_px']
+                if np.isnan(self.mask[aii,bii])==False:
+                    d_A[aii,bii] = d_A_px * calc_dx((df_A.loc[ai,'x'],df_A.loc[ai,'y']),self.locs[aii,bii,:],calib_A,d_px=1,axes=None)
+                    d_B[aii,bii] = d_B_px * calc_dx((df_B.loc[bi,'x'],df_B.loc[bi,'y']),self.locs[aii,bii,:],calib_B,d_px=1,axes=None)
+        self.diameters_AB = np.moveaxis(np.array([d_A,d_B]),0,-1)
+        self.diameter_diffs = np.diff(self.diameters_AB,axis=-1)[...,0]
+        self.diameter_means = np.mean(self.diameters_AB,axis=-1)
+        
+    def _mask_on_diameter_difference(self):
+        '''Set mask to nan for pairings for which the difference in diameter
+        (as computed between the two views) is too large
+        '''
+        relative_size_error = np.abs(self.diameter_diffs)/self.diameter_means
+        is_bad_size = (relative_size_error > self.params['rel_size_error_thresh']) & (self.diameter_means > self.params['min_d_for_rel_size_criteria'])
+        self.mask[is_bad_size] = np.nan
+        
+    def _make_dfs(self):
+        # make things DataFrames
+        attrs = ['mask','errs','diameter_diffs']
+        for attr in attrs:
+            setattr(self,attr,pd.DataFrame(index=self.df_A.index,columns=self.df_B.index,data=getattr(self,attr)))
+        
+    def _find_pairs(self):
+        
+        mask = self.mask
+        errs = self.errs
+        diameter_diffs = self.diameter_diffs
+        
+        def _drop_nans(df):
+            for i in [0,1]:
+                df.dropna(how='all',axis=i,inplace=True)    
+        
+        # list to store the pairs, list of (ix_A,ix_B) tuples
+        pairs = []
+        
+        # handle the easy ones first, where both row/column have just one match
+        for ai in mask.index:
+            if mask.loc[ai,:].sum()==1:
+                bii = np.squeeze(np.argwhere(np.atleast_1d(mask.loc[ai,:])==1))
+                bi = mask.columns[bii]
+                if mask.loc[:,bi].sum()==1:
+                    pairs.append((ai,bi))
+                
+        # drop the rows/column froms the dataframes
+        for i in [0,1]:
+            mask = mask.drop([pair[i] for pair in pairs],axis=i)
+            errs = errs.drop([pair[i] for pair in pairs],axis=i)
+            diameter_diffs = diameter_diffs.drop([pair[i] for pair in pairs],axis=i)
+            
+        # pair the ones that are each other's min for both dist and size error
+        for ai in errs.index:
+            
+            # ai might have been removed from the index so check that it's still there
+            if ai in errs.index:
+                
+                bi_dist = errs.loc[ai,:].idxmin()
+                bi_size = diameter_diffs.loc[ai,:].idxmin()
+                if bi_dist==bi_size:
+                    # see if the closest match for bi is also ai
+                    bi = bi_dist
+                    ai_dist = errs.loc[:,bi].idxmin()
+                    ai_size = diameter_diffs.loc[:,bi].idxmin()
+                    if ai==ai_dist==ai_size:
+                        #print(ai,bi)
+                        pairs.append((ai,bi))
+                        errs = errs.drop(ai,axis=0)
+                        errs = errs.drop(bi,axis=1)
+                        diameter_diffs = diameter_diffs.drop(ai,axis=0)
+                        diameter_diffs = diameter_diffs.drop(bi,axis=1)
+                        # get rid of the rows/columns with no matches
+                        [_drop_nans(df) for df in [errs,diameter_diffs]]
+                    
+        # pair the ones that are each other's min for dist
+        for ai in errs.index:
+            
+            # ai might have been removed from the index so check that it's still there
+            if ai in errs.index:
+                
+                bi = errs.loc[ai,:].idxmin()
+                ai_dist = errs.loc[:,bi].idxmin()
+                if ai==ai_dist:
+                    pairs.append((ai,bi))
+                    errs = errs.drop(ai,axis=0)
+                    errs = errs.drop(bi,axis=1)
+                    diameter_diffs = diameter_diffs.drop(ai,axis=0)
+                    diameter_diffs = diameter_diffs.drop(bi,axis=1)
+                    # get rid of the rows/columns with no matches
+                    [_drop_nans(df) for df in [errs,diameter_diffs]]
+                    
+        # Return the results
+        pair_locs = []
+        pair_errs = []
+        for pair in pairs:
+            ai,bi = pair
+            aii = np.squeeze(np.argwhere(self.df_A.index==ai))
+            bii = np.squeeze(np.argwhere(self.df_B.index==bi))
+            pair_locs.append(self.locs[aii,bii,:])
+            pair_errs.append(errs.loc[aii,bii])
+            
+        return pairs,pair_locs,pair_errs
+        
+    def match(self):
+        
+        # compute the pairings of all points
+        self._get_all_pairings()
+        
+        # mask out the ones that are obviously wrong
+        self._mask_on_error()
+        self._get_all_diameters()
+        self._mask_on_diameter_difference()
+        self._apply_mask()
+        
+        # make the arrays dataframes
+        self._make_dfs()
+        
+        # find the pairs
+        #pairs,pair_locs,pair_errs = self._find_pairs()
+        
+        #return pairs,pair_locs,pair_errs
     
 def find_pairs_v2(df_A,df_B,stereo_system,ray_sep_thresh=1e-3,rel_size_error_thresh=0.5,y_lims=[-np.inf,np.inf]): # y_lims=[.029,0.25]
     '''
@@ -192,11 +343,11 @@ def find_pairs_v2(df_A,df_B,stereo_system,ray_sep_thresh=1e-3,rel_size_error_thr
     mask = np.ones_like(dists).astype(float)
     mask[is_bad_pos] = np.nan
     
-    # mask the ones that are outside the tank
-    is_bad_y = np.zeros_like(is_bad_pos).astype(bool)
-    is_bad_y[pairings[:,:,1]<y_lims[0]] = True
-    is_bad_y[pairings[:,:,1]>y_lims[1]] = True
-    mask[is_bad_y] = np.nan
+    # # mask the ones that are outside the tank
+    # is_bad_y = np.zeros_like(is_bad_pos).astype(bool)
+    # is_bad_y[pairings[:,:,1]<y_lims[0]] = True
+    # is_bad_y[pairings[:,:,1]>y_lims[1]] = True
+    # mask[is_bad_y] = np.nan
     
     # get the diameter of each object given each pairing
     d_A = np.zeros_like(dists)

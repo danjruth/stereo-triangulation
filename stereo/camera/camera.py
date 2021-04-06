@@ -90,7 +90,7 @@ class CameraCalibration:
             Y = self.Y_lims
         return self.linear_ray_coefs.get_ray_segment(x,y,Y)
     
-    def draw_bounding_rays(self,ax,color='k',alpha=0.5,lw=1,ls='-'):
+    def draw_bounding_rays(self,ax,color='k',alpha=0.5,lw=3,ls='-'):
         # plot the fit straight line for these points
         linear_ray = self(0,0)
         ax.plot(linear_ray[:,0],linear_ray[:,1],linear_ray[:,2],ls,color=color,alpha=alpha,lw=lw)
@@ -101,7 +101,7 @@ class CameraCalibration:
         linear_ray = self(0,self.im_shape[0])
         ax.plot(linear_ray[:,0],linear_ray[:,1],linear_ray[:,2],ls,color=color,alpha=alpha,lw=lw)
     
-    def draw_calibration(self,ax,draw_calib_points=False,color='b',with_dots=True):
+    def draw_interpolant_lines(self,ax,draw_calib_points=False,color='b',with_dots=True):
 
         for xi,x in enumerate(self.interpolant_x):
             for yi,y in enumerate(self.interpolant_y):                
@@ -119,10 +119,9 @@ class CameraCalibration:
                 # plot the fit straight line for these points
                 linear_ray = self(x,y)
                 ax.plot(linear_ray[:,0],linear_ray[:,1],linear_ray[:,2],'-',color=color,alpha=0.6)
-                    
-        if draw_calib_points:
-            # draw the calibration points
-            ax.plot(self.object_points['X'],self.object_points['Y'],self.object_points['Z'],'x',color='r',alpha=0.6)
+                
+    def draw_calib_points(self,ax,marker='x',color='r',alpha=0.6):
+        ax.plot(self.object_points['X'],self.object_points['Y'],self.object_points['Z'],marker,color=color,alpha=alpha)
             
     def build_inverse_interpolator(self,XYZ_center,bounds=np.array([-0.01,0.01])):
         '''
@@ -239,13 +238,13 @@ class LinearRayCoefs:
 ### FUNCTIONS TO LOAD A SAVED CALIBRATION
 ###############################################################################
     
-def calib_from_folder(folder,y_strs_mm,im_shape_yx):
+def calib_from_folder(folder,y_strs_mm,im_shape_yx,**kwargs):
     '''
     Initialize a CameraCalibration object given the folder its inputted data is
     store in.
     '''    
     dfs = pd.concat([pd.read_pickle(folder+'y_'+y+'mm.pkl') for y in y_strs_mm])
-    calib = CameraCalibration(dfs[['X','Y','Z']],dfs[['x','y']],im_shape_yx)
+    calib = CameraCalibration(dfs[['X','Y','Z']],dfs[['x','y']],im_shape_yx,**kwargs)
     return calib
             
 def calib_from_dict(d):
@@ -405,6 +404,8 @@ def find_px_minimization(XYZ,calib):
     minimization (takes a while)
     '''
     def err(xy):
+        '''distance (in m) between the given XYZ and the approximated XYZ
+        '''
         this_XYZ = calib(xy[0],xy[1],XYZ[1])
         return np.linalg.norm(XYZ-this_XYZ)
     res = scipy.optimize.minimize(err,(calib.im_shape[1]/2,calib.im_shape[0]/2))
@@ -413,7 +414,29 @@ def find_px_minimization(XYZ,calib):
 def build_inverse_interpolator(X,Y,Z,calib,err_thresh=1e-4):
     '''
     Get a function that returns the (x,y) pixel coordinates given (X,Y,Z) 
-    object coordinates
+    object coordinates for a given camera.
+    
+    Parameters
+    ----------
+    
+    X, Y, Z : 1-d np.ndarrays
+        Arrays defining the grid of physical points used to build the 
+        interpolator.
+        
+    calib : CameraCalibration
+        The instance of a camera calibration on which the inverse interpolator
+        is based.
+        
+    err_thresh : float
+        The maximum error (in meters) between the given XYZ and the calculated 
+        XYZ, given the (x,y) pixels found with find_px_minimization.
+        
+    Returns
+    ----------
+    
+    interp : callable
+        A function which returns pixel (x,y) coordinates corresponding to given
+        XYZ locations, with the shape depending on the shape of XYZ
     '''
     
     # get the xy points at each
@@ -426,23 +449,24 @@ def build_inverse_interpolator(X,Y,Z,calib,err_thresh=1e-4):
                 xy_px[xi,yi,zi,:],err[xi,yi,zi] = find_px_minimization(XYZ,calib)
                 
     # get rid of bad results
-    print(xy_px)
-    print('-------')
-    print(err)
     mask = np.ones_like(err)
+    # mask where the error is too big
     mask[err>err_thresh] = np.nan
+    # mask where the returned (x,y) is outside the image shape
     mask[xy_px[...,0]<0] = np.nan
     mask[xy_px[...,1]<0] = np.nan
     mask[xy_px[...,0]>calib.im_shape[1]] = np.nan
     mask[xy_px[...,1]>calib.im_shape[0]] = np.nan
+    # apply the mask
     xy_px[...,0] = xy_px[...,0]*mask
     xy_px[...,1] = xy_px[...,1]*mask
-    #print(xy_px)
         
-    import scipy.interpolate    
+    # create inerpolators for the pixel x and y locations
+    import scipy.interpolate
     interp_x = scipy.interpolate.RegularGridInterpolator((X,Y,Z),xy_px[...,0],bounds_error=False,fill_value=None)
     interp_y = scipy.interpolate.RegularGridInterpolator((X,Y,Z),xy_px[...,1],bounds_error=False,fill_value=None)
     
+    # create a function for returning (x,y) given XYZ
     def interp(XYZ):
         return np.squeeze(np.array([interp_x(XYZ),interp_y(XYZ)]))
     
