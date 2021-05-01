@@ -10,6 +10,7 @@ import scipy.interpolate
 import cv2
 import pickle
 import pandas as pd
+import matplotlib.pyplot as plt
 
 class CameraCalibration:
     '''
@@ -44,6 +45,8 @@ class CameraCalibration:
     def __init__(self,object_points,image_points,im_shape,n_x_interpolate=10,n_y_interpolate=11):
         
         self.image_points = image_points.reset_index(drop=True)#[['x','y']].copy()
+        print('MULTIPLYING Y BY 10!!!!!!!!!!!!!!!!!')
+        object_points['Y'] = object_points['Y']*10
         self.object_points = object_points[['X','Y','Z']].copy().reset_index(drop=True)
         self.im_shape = im_shape
         self.Y_lims = np.array([self.object_points['Y'].min(),self.object_points['Y'].max()])
@@ -90,6 +93,15 @@ class CameraCalibration:
             Y = self.Y_lims
         return self.linear_ray_coefs.get_ray_segment(x,y,Y)
     
+    def set_axes_lims(self,ax,):
+        '''
+        Set the x and y limits for an axes corresponding to this calibration's
+        image shape.
+        '''
+        ax.set_xlim(-0.5,self.im_shape[1]+0.5)
+        ax.set_xlim(self.im_shape[0]+0.5,-0.5,)
+        ax.set_aspect('equal')
+    
     def draw_bounding_rays(self,ax,color='k',alpha=0.5,lw=3,ls='-'):
         # plot the fit straight line for these points
         linear_ray = self(0,0)
@@ -123,7 +135,7 @@ class CameraCalibration:
     def draw_calib_points(self,ax,marker='x',color='r',alpha=0.6):
         ax.plot(self.object_points['X'],self.object_points['Y'],self.object_points['Z'],marker,color=color,alpha=alpha)
             
-    def build_inverse_interpolator(self,XYZ_center,bounds=np.array([-0.01,0.01])):
+    def build_inverse_interpolator(self,XYZ_center,bounds=np.array([-0.01,0.01]),err_thresh=1e-4):
         '''
         Get a method that uses interpolation to return the (x,y) pixel coords 
         of an object given its (X,Y,Z) physical coordinates. XYZ_center and 
@@ -133,7 +145,47 @@ class CameraCalibration:
         X = XYZ_center[0]+bounds
         Y = XYZ_center[1]+bounds
         Z = XYZ_center[2]+bounds
-        self.inverse = build_inverse_interpolator(X,Y,Z,self)
+        self.inverse = build_inverse_interpolator(X,Y,Z,self,err_thresh=err_thresh)
+        
+    def plot_known_vs_predicted(self):
+        
+        fig,axs = plt.subplots(2,2,figsize=(10,9))
+        
+        for row_i, comp_i, phys_dir in zip([0,1],[0,2],['X','Z']):
+        
+            # known vs interpolated within the planes
+            ax = axs[row_i,0]
+            for yi,Y in enumerate(self.object_points['Y'].unique()):
+            
+                cond = self.object_points['Y']==Y
+                Z_known = self.object_points[phys_dir][cond]    
+                Z_pred = self.calibration_planes(self.image_points['x'][cond].values,self.image_points['y'][cond].values)[yi,comp_i,:]
+                ax.scatter(Z_known,(Z_known-Z_pred)*1000,label=str(int(Y*1000)),alpha=0.5)
+                
+            ax.set_xlabel('$'+phys_dir+'$ [m]')
+            ax.set_ylabel('$'+phys_dir+'$ error [mm]')
+            ax.legend(title='Plane $Y$ [mm]')
+            ax.set_title('known vs interpolated in y planes')
+            
+            # known vs values from linear rays
+            ax = axs[row_i,1]
+            for yi,Y in enumerate(self.object_points['Y'].unique()):
+                
+                cond = self.object_points['Y']==Y
+                Z_known = self.object_points[phys_dir][cond]
+                Z_pred = []
+                for i in np.arange(len(self.image_points[cond])):
+                    Z_pred.append(self.linear_ray_coefs.get_ray_segment(self.image_points['x'][cond].values[i],self.image_points['y'][cond].values[i],Y))
+        
+                Z_pred = np.array(Z_pred)[:,comp_i]
+                ax.scatter(Z_known,(Z_known-Z_pred)*1000,label=str(int(Y*1000)),alpha=0.5)
+            
+            ax.set_xlabel('$'+phys_dir+'$ [m]')
+            ax.set_ylabel('$'+phys_dir+'$ error [mm]')
+            ax.legend(title='Plane $Y$ [mm]')
+            ax.set_title('known vs values from linear rays')
+        
+        fig.tight_layout()
         
 class CalibrationPlanes:
     '''
@@ -439,13 +491,18 @@ def build_inverse_interpolator(X,Y,Z,calib,err_thresh=1e-4):
         XYZ locations, with the shape depending on the shape of XYZ
     '''
     
+    print(np.shape(X))
+    
     # get the xy points at each
+    print('getting the xy points at each location...')
+    XYZ_all = np.zeros((len(X),len(Y),len(Z),3))
     xy_px = np.zeros((len(X),len(Y),len(Z),2))
     err = np.zeros((len(X),len(Y),len(Z)))
     for xi,x in enumerate(X):
         for yi,y in enumerate(Y):
             for zi,z in enumerate(Z):
                 XYZ = np.array([x,y,z])
+                XYZ_all[xi,yi,zi,:] = XYZ
                 xy_px[xi,yi,zi,:],err[xi,yi,zi] = find_px_minimization(XYZ,calib)
                 
     # get rid of bad results
@@ -460,14 +517,36 @@ def build_inverse_interpolator(X,Y,Z,calib,err_thresh=1e-4):
     # apply the mask
     xy_px[...,0] = xy_px[...,0]*mask
     xy_px[...,1] = xy_px[...,1]*mask
-        
+            
     # create inerpolators for the pixel x and y locations
-    import scipy.interpolate
-    interp_x = scipy.interpolate.RegularGridInterpolator((X,Y,Z),xy_px[...,0],bounds_error=False,fill_value=None)
-    interp_y = scipy.interpolate.RegularGridInterpolator((X,Y,Z),xy_px[...,1],bounds_error=False,fill_value=None)
+    print('creating the interpolators...')
+    [print(np.shape(a)) for a in (X,Y,Z)]
+    interp_x = scipy.interpolate.RegularGridInterpolator((X,Y,Z),xy_px[...,0],bounds_error=False,fill_value=None,method='linear')
+    interp_y = scipy.interpolate.RegularGridInterpolator((X,Y,Z),xy_px[...,1],bounds_error=False,fill_value=None,method='linear')
+    
+    
+    # points = np.array([XYZ_all[...,i].flatten() for i in range(3)]).T
+    # vals_x = xy_px[...,0].flatten()
+    # vals_y = xy_px[...,1].flatten()
+    # cond = (~np.isnan(vals_x)) * (~np.isnan(vals_y))
+    # points = points[cond,:]
+    # vals_x = vals_x[cond]
+    # vals_y = vals_y[cond]
+    # interp_x = scipy.interpolate.LinearNDInterpolator(points,vals_x,)
+    # interp_y = scipy.interpolate.LinearNDInterpolator(points,vals_y,)
     
     # create a function for returning (x,y) given XYZ
     def interp(XYZ):
         return np.squeeze(np.array([interp_x(XYZ),interp_y(XYZ)]))
     
+    # def interp(XYZ_find):
+        
+        
+        
+    #     print(np.shape(points))
+    #     print(np.shape(vals_x))
+    #     print(np.shape(XYZ_find))
+    #     return np.squeeze(np.array([scipy.interpolate.griddata(points,vals_x,XYZ_find),scipy.interpolate.griddata(points,vals_y,XYZ_find)]))
+    
     return interp
+
