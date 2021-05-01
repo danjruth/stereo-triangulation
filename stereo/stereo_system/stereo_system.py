@@ -9,7 +9,12 @@ import numpy as np
 from stereo.camera import coefs_to_points
 import scipy.optimize
 import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.patches import ConnectionPatch
 
+DEFAULT_SPATIAL_LIMS = dict(x=np.array([-np.inf,np.inf]),
+                            y=np.array([-np.inf,np.inf]),
+                            z=np.array([-np.inf,np.inf]))
 class StereoSystem:
     '''
     A class to combine two CameraCalibrations into a stereo vision system.
@@ -21,8 +26,14 @@ class StereoSystem:
         The two camera calibrations.
     '''
     
-    def __init__(self,calib_A,calib_B):        
-        self.calibs = [calib_A,calib_B]        
+    def __init__(self,calib_A,calib_B,lims=DEFAULT_SPATIAL_LIMS):        
+        self.calibs = [calib_A,calib_B]
+        
+        # update the spatial limits
+        _lims = DEFAULT_SPATIAL_LIMS.copy()
+        for key in lims:
+            _lims[key] = lims[key]
+        self.lims=_lims
         
     def find_shortest_connection(self,xy_A,xy_B):        
         '''
@@ -104,9 +115,8 @@ def minimize_dist_n_lines(linear_ray_coefs):
         
 DEFAULT_MATCH_PARAMS = {'ray_sep_thresh':1e-3, # [m], separation between rays
                         'rel_size_error_thresh':0.5, # max allowable of abs(d_A-d_B)/(0.5*(d_A+d_B))
-                        'min_d_for_rel_size_criteria':1e-3, # [m], value of 0.5*(d_A+d_B) below which rel_size_error_thresh is not applied
-                        }
-    
+                        'min_d_for_rel_size_criteria':2e-3, # [m], value of 0.5*(d_A+d_B) below which rel_size_error_thresh is not applied
+                        }    
 class Matcher:
     
     def __init__(self,df_A,df_B,stereo_system,params={}):
@@ -115,19 +125,89 @@ class Matcher:
         self.df_B = df_B
         self.stereo_system = stereo_system
         
+        self.index_A = df_A.index
+        self.index_B = df_B.index
+        
         # set matcher params
         self.params = DEFAULT_MATCH_PARAMS.copy()
         for key in params:
             self.params[key] = params[key]
             
         # initialize arrays in which pairing data will be stored
-        self.locs = np.zeros((len(df_A),len(df_B),3)).astype(float)
-        self.errs = np.zeros((len(df_A),len(df_B))).astype(float)
+        self.locs = np.zeros((len(df_A),len(df_B),3)).astype(float) * np.nan
+        self.errs = np.zeros((len(df_A),len(df_B))).astype(float) * np.nan
         self.mask = np.ones_like(self.errs).astype(float)
-        self.diameters = np.zeros_like(self.errs)
-        self.diameter_diffs = np.zeros_like(self.errs)
+        self.diameters = np.zeros_like(self.errs) * np.nan
+        self.diameter_diffs = np.zeros_like(self.errs) * np.nan
+        
+    def show_state(self,):
+        
+        fig,axs = plt.subplots(1,2,figsize=(9,4))
+        
+        for df,ax,calib in zip([self.df_A,self.df_B],axs,self.stereo_system.calibs):
+            ax.scatter(df['x'],df['y'],color='gray',)
+            calib.set_axes_lims(ax)
+        
+        for ai,a in enumerate(self.df_A.index):
+            for bi,b in enumerate(self.df_B.index):
+                if ~np.isnan(self.mask[ai,bi]):
+                    cp = ConnectionPatch(xyA=[self.df_A.loc[a,'x'],self.df_A.loc[a,'y']],
+                                         xyB=[self.df_B.loc[b,'x'],self.df_B.loc[b,'y']],
+                                         coordsA='data',
+                                         coordsB='data',
+                                         axesA=axs[0],
+                                         axesB=axs[1],
+                                         alpha=0.5)
+                    axs[1].add_patch(cp)
+                    
+        fig.tight_layout()
+        
+    def _mask_on_dist_to_epipolar(self,dist_thresh_px=25,n_points_epipolar=51):
+        '''see which bubbles in image B are close to the epipolar line for each 
+        bubble in image A
+        '''
+        
+        df_A = self.df_A
+        df_B = self.df_B
+        
+        calib_A = self.stereo_system.calibs[0]
+        calib_B = self.stereo_system.calibs[1]
+        
+        y_lims = self.stereo_system.lims['y']
+        
+        not_to_mask = np.zeros_like(self.mask)
+        dists_to_epipolar = np.zeros_like(self.mask)*np.nan
+        
+        B_close_to_A_epipolar = {}
+        for ai in df_A.index:
             
-    def _get_all_pairings(self):
+            xy_A = np.array([df_A.loc[ai,'x'],df_A.loc[ai,'y']])
+            
+            # possible locations in image B
+            xy_B_curve = find_epipolar_line_given_otherpx(calib_A,calib_B,xy_A,np.linspace(y_lims[0],y_lims[1],n_points_epipolar))
+            
+            # distance from each df_B bubble to each point on epipolar line
+            dist_points = np.sqrt(np.subtract.outer(df_B['x'].values,xy_B_curve[:,0])**2 + np.subtract.outer(df_B['y'].values,xy_B_curve[:,1])**2)
+            
+            # closest distance to epipolar line
+            min_dist = np.min(dist_points,axis=1)
+            dists_to_epipolar[ai,:] = min_dist
+            close_enough = min_dist < dist_thresh_px
+            ai_close_enough = np.squeeze(np.argwhere(close_enough))
+            B_close_to_A_epipolar[ai] = np.array(df_B.index[ai_close_enough])
+            
+            # if getting the epipolar line didn't work for some reason, keep all the bubbles
+            if np.all(np.isnan(xy_B_curve)):
+                print('epipolar line was all NaN!')
+                B_close_to_A_epipolar[ai] = np.array(df_B.index)
+                
+            not_to_mask[ai,B_close_to_A_epipolar[ai]] = 1
+        
+        self.mask[not_to_mask==0] = np.nan
+        self.B_close_to_A_epipolar = B_close_to_A_epipolar
+        self.dists_to_epipolar = dists_to_epipolar
+                            
+    def _get_all_pairings(self,use_epipolar_distance=False):
         '''With n_A and n_B rows in df_A and df_B, compute the n_A x n_B 
         pairings (the location and error associated with each)
         '''
@@ -138,13 +218,23 @@ class Matcher:
         # get the pairing positions and errors for each combination
         for aii,ai in enumerate(df_A.index):
             for bii,bi in enumerate(df_B.index):
-                self.locs[aii,bii,:],self.errs[aii,bii] = self.stereo_system((df_A.loc[ai,'x'],df_A.loc[ai,'y']),(df_B.loc[bi,'x'],df_B.loc[bi,'y']))
+                if np.isnan(self.mask[aii,bii])==False:
+                    self.locs[aii,bii,:],self.errs[aii,bii] = self.stereo_system((df_A.loc[ai,'x'],df_A.loc[ai,'y']),(df_B.loc[bi,'x'],df_B.loc[bi,'y']))
 
     def _mask_on_error(self):
         '''set the mask to nan for pairings for which the error is too large
         '''
-        is_bad_pos = self.errs > self.params['ray_sep_thresh']
-        self.mask[is_bad_pos] = np.nan
+        is_bad_err = self.errs > self.params['ray_sep_thresh']
+        self.mask[is_bad_err] = np.nan
+        
+    def _mask_on_pos(self):
+        '''set the mask to nan for pairings outside the StereoSystem's limits
+        '''
+        for ai,axis in enumerate(['x','y','z']):
+            is_bad_axis = np.zeros_like(self.errs).astype(bool)
+            is_bad_axis[self.locs[:,:,ai]<self.stereo_system.lims[axis][0]] = True
+            is_bad_axis[self.locs[:,:,ai]>self.stereo_system.lims[axis][1]] = True
+            self.mask[is_bad_axis] = np.nan
         
     def _apply_mask(self):
         '''multiply a bunch of arrays by the mask to nan-out masked pairings
@@ -168,7 +258,7 @@ class Matcher:
                 if np.isnan(self.mask[aii,bii])==False:
                     d_A[aii,bii] = d_A_px * calc_dx((df_A.loc[ai,'x'],df_A.loc[ai,'y']),self.locs[aii,bii,:],calib_A,d_px=1,axes=None)
                     d_B[aii,bii] = d_B_px * calc_dx((df_B.loc[bi,'x'],df_B.loc[bi,'y']),self.locs[aii,bii,:],calib_B,d_px=1,axes=None)
-        self.diameters_AB = np.moveaxis(np.array([d_A,d_B]),0,-1)
+        self.diameters_AB = np.moveaxis(np.array([d_A,d_B]),0,-1) # [ai,bi,which_view]
         self.diameter_diffs = np.diff(self.diameters_AB,axis=-1)[...,0]
         self.diameter_means = np.mean(self.diameters_AB,axis=-1)
         
@@ -178,111 +268,99 @@ class Matcher:
         '''
         relative_size_error = np.abs(self.diameter_diffs)/self.diameter_means
         is_bad_size = (relative_size_error > self.params['rel_size_error_thresh']) & (self.diameter_means > self.params['min_d_for_rel_size_criteria'])
+        print(is_bad_size)
         self.mask[is_bad_size] = np.nan
-        
-    def _make_dfs(self):
-        # make things DataFrames
-        attrs = ['mask','errs','diameter_diffs']
-        for attr in attrs:
-            setattr(self,attr,pd.DataFrame(index=self.df_A.index,columns=self.df_B.index,data=getattr(self,attr)))
         
     def _find_pairs(self):
         
         mask = self.mask
         errs = self.errs
         diameter_diffs = self.diameter_diffs
-        
-        def _drop_nans(df):
-            for i in [0,1]:
-                df.dropna(how='all',axis=i,inplace=True)    
+        df_A = self.df_A
+        df_B = self.df_B
+                
+        def _nan_pairs(aii,bii):
+            # mask pairing once it's been established
+            mask[aii,bii] = np.nan
         
         # list to store the pairs, list of (ix_A,ix_B) tuples
-        pairs = []
+        pairs_i = [] # [ix_A_i,ix_B_i]
         
         # handle the easy ones first, where both row/column have just one match
-        for ai in mask.index:
-            if mask.loc[ai,:].sum()==1:
-                bii = np.squeeze(np.argwhere(np.atleast_1d(mask.loc[ai,:])==1))
-                bi = mask.columns[bii]
-                if mask.loc[:,bi].sum()==1:
-                    pairs.append((ai,bi))
-                
-        # drop the rows/column froms the dataframes
-        for i in [0,1]:
-            mask = mask.drop([pair[i] for pair in pairs],axis=i)
-            errs = errs.drop([pair[i] for pair in pairs],axis=i)
-            diameter_diffs = diameter_diffs.drop([pair[i] for pair in pairs],axis=i)
+        for aii in range(len(df_A)):
+            ai = df_A.index[aii]
+            if np.nansum(mask[aii,:])==1:
+                bii = np.squeeze(np.argwhere(np.atleast_1d(mask[aii,:])==1))
+                bi = df_B.index[bii]
+                if np.nansum(mask[:,bii])==1:
+                    pairs_i.append((aii,bii))
+                    _nan_pairs(aii,bii)
             
         # pair the ones that are each other's min for both dist and size error
-        for ai in errs.index:
+        #for ai in errs.index:
+        for aii in [aii for aii in range(len(df_A)) if not (aii in np.array(pairs_i)[:,0]) and ~np.all(np.isnan(errs[aii,:]))]:
             
-            # ai might have been removed from the index so check that it's still there
-            if ai in errs.index:
-                
-                bi_dist = errs.loc[ai,:].idxmin()
-                bi_size = diameter_diffs.loc[ai,:].idxmin()
-                if bi_dist==bi_size:
-                    # see if the closest match for bi is also ai
-                    bi = bi_dist
-                    ai_dist = errs.loc[:,bi].idxmin()
-                    ai_size = diameter_diffs.loc[:,bi].idxmin()
-                    if ai==ai_dist==ai_size:
-                        #print(ai,bi)
-                        pairs.append((ai,bi))
-                        errs = errs.drop(ai,axis=0)
-                        errs = errs.drop(bi,axis=1)
-                        diameter_diffs = diameter_diffs.drop(ai,axis=0)
-                        diameter_diffs = diameter_diffs.drop(bi,axis=1)
-                        # get rid of the rows/columns with no matches
-                        [_drop_nans(df) for df in [errs,diameter_diffs]]
-                    
-        # pair the ones that are each other's min for dist
-        for ai in errs.index:
+            bii_dist = np.squeeze(np.nanargmin(errs[aii,:])) # bii index of smallest distance error
+            bii_size = np.squeeze(np.nanargmin(diameter_diffs[aii,:])) # bii index of smallest diameter error
+            if bii_dist==bii_size:
+                # see if the closest match for bi is also ai
+                bii = bii_dist
+                aii_dist = np.squeeze(np.nanargmin(errs[:,bii]))
+                aii_size = np.squeeze(np.nanargmin(diameter_diffs[:,bii]))
+                if aii==aii_dist==aii_size and ~np.isnan(mask[aii,bii]):
+                    ai = df_A.index[aii]
+                    bi = df_B.index[bii]
+                    pairs_i.append((aii,bii))
+                    _nan_pairs(aii,bii)
+                                        
+        # pair the ones that are each other's min for both dist and size error
+        #for ai in errs.index:
+        for aii in [aii for aii in range(len(df_A)) if not (aii in np.array(pairs_i)[:,0]) and ~np.all(np.isnan(errs[aii,:]))]:
             
-            # ai might have been removed from the index so check that it's still there
-            if ai in errs.index:
-                
-                bi = errs.loc[ai,:].idxmin()
-                ai_dist = errs.loc[:,bi].idxmin()
-                if ai==ai_dist:
-                    pairs.append((ai,bi))
-                    errs = errs.drop(ai,axis=0)
-                    errs = errs.drop(bi,axis=1)
-                    diameter_diffs = diameter_diffs.drop(ai,axis=0)
-                    diameter_diffs = diameter_diffs.drop(bi,axis=1)
-                    # get rid of the rows/columns with no matches
-                    [_drop_nans(df) for df in [errs,diameter_diffs]]
-                    
+            bii = np.squeeze(np.nanargmin(errs[aii,:])) # bii index of smallest distance error
+
+            aii_of_bii = np.squeeze(np.nanargmin(errs[:,bii]))
+            if aii==aii_of_bii and ~np.isnan(mask[aii,bii]):
+                ai = df_A.index[aii]
+                bi = df_B.index[bii]
+                pairs_i.append((aii,bii))
+                _nan_pairs(aii,bii)
+                                    
         # Return the results
         pair_locs = []
         pair_errs = []
-        for pair in pairs:
-            ai,bi = pair
-            aii = np.squeeze(np.argwhere(self.df_A.index==ai))
-            bii = np.squeeze(np.argwhere(self.df_B.index==bi))
+        pairs = []
+        for pair_i in pairs_i:
+            aii,bii = pair_i
+            ai = df_A.index[aii]
+            bi = df_B.index[bii]
+            pairs.append((ai,bi))
             pair_locs.append(self.locs[aii,bii,:])
-            pair_errs.append(errs.loc[aii,bii])
+            pair_errs.append(errs[aii,bii])
             
         return pairs,pair_locs,pair_errs
         
     def match(self):
         
-        # compute the pairings of all points
+        # mask based on the epipolar distances
+        self._mask_on_dist_to_epipolar()
+        
+        # compute the pairings of all points not masked
         self._get_all_pairings()
         
-        # mask out the ones that are obviously wrong
+        # mask based on the error, diameter difference, and position
         self._mask_on_error()
+        self._mask_on_pos()
         self._get_all_diameters()
         self._mask_on_diameter_difference()
+        
+        # apply the mask
         self._apply_mask()
         
-        # make the arrays dataframes
-        self._make_dfs()
-        
         # find the pairs
-        #pairs,pair_locs,pair_errs = self._find_pairs()
+        pairs,pair_locs,pair_errs = self._find_pairs()
         
-        #return pairs,pair_locs,pair_errs
+        return pairs,pair_locs,pair_errs
     
 def find_pairs_v2(df_A,df_B,stereo_system,ray_sep_thresh=1e-3,rel_size_error_thresh=0.5,y_lims=[-np.inf,np.inf]): # y_lims=[.029,0.25]
     '''
@@ -330,12 +408,42 @@ def find_pairs_v2(df_A,df_B,stereo_system,ray_sep_thresh=1e-3,rel_size_error_thr
     
     calib_A,calib_B = stereo_system.calibs
     
+    # see which bubbles in image B are close to the epipolar line for each 
+    # bubble in image A
+    possible_matches_to_A = {}
+    px_thresh = 25
+    for ai in df_A.index:
+        
+        xy_A = np.array([df_A.loc[ai,'x'],df_A.loc[ai,'y']])
+        
+        # possible locations in image B
+        xy_B_curve = find_epipolar_line_given_otherpx(calib_A,calib_B,xy_A,np.linspace(y_lims[0],y_lims[1],51))
+        
+        # distance from each df_B bubble to each point on epipolar line
+        dist_points = np.sqrt(np.subtract.outer(df_B['x'].values,xy_B_curve[:,0])**2 + np.subtract.outer(df_B['y'].values,xy_B_curve[:,1])**2)
+        
+        # closest distance to epipolar line
+        min_dist = np.min(dist_points,axis=1)
+        close_enough = min_dist < px_thresh
+        ai_close_enough = np.squeeze(np.argwhere(close_enough))
+        possible_matches_to_A[ai] = np.array(df_B.index[ai_close_enough])
+        
+        # if getting the epipolar line didn't work for some reason, keep all the bubbles
+        if np.all(np.isnan(xy_B_curve)):
+            print('epipolar line was all NaN!')
+            possible_matches_to_A[ai] = np.array(df_B.index)
+        
+        #possible_matches_to_A[ai] = np.array(df_B.index)
+    #print('possible_matches_to_A:')
+    #print(possible_matches_to_A)
+    
     # get the pairing positions and errors for each combination
-    pairings = np.zeros((len(df_A),len(df_B),3))
-    dists = np.zeros((len(df_A),len(df_B)))
+    pairings = np.zeros((len(df_A),len(df_B),3)) * np.nan
+    dists = np.zeros((len(df_A),len(df_B))) * np.nan
     for aii,ai in enumerate(df_A.index):
         for bii,bi in enumerate(df_B.index):
-            pairings[aii,bii,:],dists[aii,bii] = stereo_system((df_A.loc[ai,'x'],df_A.loc[ai,'y']),(df_B.loc[bi,'x'],df_B.loc[bi,'y']))
+            if bi in possible_matches_to_A[ai]:
+                pairings[aii,bii,:],dists[aii,bii] = stereo_system((df_A.loc[ai,'x'],df_A.loc[ai,'y']),(df_B.loc[bi,'x'],df_B.loc[bi,'y']))
     
     # mask the ones that are too far apart in location
     pair_errs = dists.copy()
@@ -600,3 +708,13 @@ def get_image_XYZ_coords(x_px,y_px,calib,XYZ_ref,xy_ref):
         xyz_im[...,i] = scipy.interpolate.interp2d(x_px[[0,-1]],y_px[[0,-1]],xyz_im_corners[...,i])(x_px,y_px).reshape(np.shape(X_px))
         
     return xyz_im
+
+def find_epipolar_line_given_otherpx(calib_A,calib_B,xy_A,Y_vals):
+    
+    # corresponding XYZ values
+    XYZ_vals = calib_A(xy_A[0],xy_A[1],Y_vals) # of line that corresponds to pixel in view A
+    
+    # get xy values in view B based on that inverse interpolator
+    xy_b_vals = calib_B.inverse(XYZ_vals).T
+    
+    return xy_b_vals
