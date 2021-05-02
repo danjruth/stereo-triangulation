@@ -286,6 +286,76 @@ class LinearRayCoefs:
         coefs = self(x,y)
         return coefs_to_points(coefs,Y_line)
     
+def calc_dx(xy_pix,point,calib,d_px=1,axes=None):
+    '''
+    Calculate the effective pixel size, given an object's 3d location and the
+    pixel location.
+    
+    This is done by calculating the adjacent pixels' rays' intersections with
+    the object's plane, then computing the real-world distance between these
+    points.
+    
+    Parameters
+    ----------
+    
+    xy_pix : tuple
+        The (x,y) image cooridnates of the object.
+        
+    point : tuple
+        The (X,Y,Z) coordinates of the object in 3D space.
+        
+    calib : CameraCalibration
+        The calibration object for the camera.
+        
+    d_px : float, optional
+        The small pixel displacement used to calculate the pixel size
+        
+    axes : matplotlib.Axes or None, optional
+        The axes on which to illustrate the calculation.
+        
+    Returns
+    ----------
+    
+    dx : float
+        The mean of the pixel sizes in the camera's x and y directions.    
+    '''
+    
+    # get the ray coefficients for this point
+    ray_coefs = calib.linear_ray_coefs(xy_pix[0],xy_pix[1])
+    [[ax,bx,],[_,_],[az,bz]] = ray_coefs
+    [X,Y,Z] = point
+
+    # do it once vertically, once horizontally
+    dx_directional = []
+    for axis in [0,1]:
+        
+        side_points = []
+        for d in [-d_px,d_px]:
+            
+            # calculate the pixel coordinates of this "test point"
+            xy_pix_side = np.array(xy_pix).astype(float)
+            xy_pix_side[axis] = xy_pix_side[axis]+d
+            
+            # calculate the ray going through this point
+            ray_coefs_side = calib.linear_ray_coefs(xy_pix_side[0],xy_pix_side[1])
+            [[axp,bxp,],[_,_],[azp,bzp]] = ray_coefs_side
+
+            # find the Y value at which the "right" ray intersects the object's plane
+            Yp = (ax*(X-bxp) + az*(Z-bzp)+Y) / (ax*axp+az*azp+1)
+            
+            # find the location of the intersection of this ray with the object's plane
+            loc_p = coefs_to_points(ray_coefs_side,Yp)
+            side_points.append(loc_p)
+            if axes is not None:
+                axes.plot([loc_p[0]],[loc_p[1]],loc_p[[2]],'o',color='r')
+                ray = calib(xy_pix_side[0],xy_pix_side[1])
+                axes.plot(ray[:,0],ray[:,1],ray[:,2],'-',color='r')
+            
+        # get the displacement between the two points
+        side_points_diff = np.diff(side_points,axis=0)
+        dx_directional.append(np.linalg.norm(side_points_diff) / (2*d_px))
+    return np.mean(dx_directional)
+    
 ###############################################################################
 ### FUNCTIONS TO LOAD A SAVED CALIBRATION
 ###############################################################################

@@ -10,23 +10,49 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.patches import ConnectionPatch
 
-from .stereo_system import find_epipolar_line_given_otherpx, calc_dx 
+from .stereo_system import find_epipolar_line_given_otherpx
+from ..camera.camera import calc_dx
 
 DEFAULT_MATCH_PARAMS = {'ray_sep_thresh':1e-3, # [m], separation between rays
                         'rel_size_error_thresh':0.5, # max allowable of abs(d_A-d_B)/(0.5*(d_A+d_B))
                         'min_d_for_rel_size_criteria':2e-3, # [m], value of 0.5*(d_A+d_B) below which rel_size_error_thresh is not applied
-                        }    
+                        'epipolar_dist_thresh_px':None}    
 class Matcher:
+    '''
+    Match the objects that are detected in two images with an instance of a 
+    StereoSystem.
     
-    def __init__(self,df_A,df_B,stereo_system,params={}):
+    Parameters
+    ----------
+    df_A, df_B : pd.DataFrame
+        Dataframes containing information about the detected 2-d objects in the 
+        two views. Must contain the columns x and y, which give the pixel 
+        location of the object, and d_px, which is the diameter of the object
+        in pixels.
         
-        self.df_A = df_A
-        self.df_B = df_B
+    stereo_system : stereo.stereo_system.StereoSystem
+        The stereo system for the two views.
+        
+    params : dict, optional
+        The parameters for the matching. DEFAULT_MATCH_PARAMS is used by 
+        default, and key-value pairs from params overwrite the default values.
+        
+    frame : None or int, optional
+        If not None, df_A and df_B are filtered to only include rows for which
+        the "frame" column is equal to frame (to avoid filtering the dataframe
+        manually as the class is initialized.)
+    '''
+    
+    def __init__(self,df_A,df_B,stereo_system,params={},frame=None):
+        
+        if frame is not None:
+            df_A = df_A[df_A['frame']==frame]
+            df_B = df_B[df_B['frame']==frame]
+        
+        self.df_A = df_A.copy()
+        self.df_B = df_B.copy() 
         self.stereo_system = stereo_system
-        
-        self.index_A = df_A.index
-        self.index_B = df_B.index
-        
+
         # set matcher params
         self.params = DEFAULT_MATCH_PARAMS.copy()
         for key in params:
@@ -38,6 +64,11 @@ class Matcher:
         self.mask = np.ones_like(self.errs).astype(float)
         self.diameters = np.zeros_like(self.errs) * np.nan
         self.diameter_diffs = np.zeros_like(self.errs) * np.nan
+        
+        # where to store the (ix_A,ix_B) pairs and resulting paired DataFrame
+        self.pairs = []
+        self.pairs_i = []
+        self.df = pd.DataFrame(columns=['x','y','z','frame','err'])
         
     def show_state(self,):
         
@@ -61,7 +92,7 @@ class Matcher:
                     
         fig.tight_layout()
         
-    def _mask_on_dist_to_epipolar(self,dist_thresh_px=25,n_points_epipolar=51):
+    def _mask_on_dist_to_epipolar(self,n_points_epipolar=51):
         '''see which bubbles in image B are close to the epipolar line for each 
         bubble in image A
         '''
@@ -91,7 +122,7 @@ class Matcher:
             # closest distance to epipolar line
             min_dist = np.min(dist_points,axis=1)
             dists_to_epipolar[ai,:] = min_dist
-            close_enough = min_dist < dist_thresh_px
+            close_enough = min_dist < self.params['epipolar_dist_thresh_px']
             ai_close_enough = np.squeeze(np.argwhere(close_enough))
             B_close_to_A_epipolar[ai] = np.array(df_B.index[ai_close_enough])
             
@@ -138,7 +169,7 @@ class Matcher:
     def _apply_mask(self):
         '''multiply a bunch of arrays by the mask to nan-out masked pairings
         '''
-        attrs = ['locs','errs','diameter_means','diameter_diffs']
+        attrs = ['locs','errs','diameters','diameter_diffs']
         for attr in attrs:
             setattr(self,attr,(getattr(self,attr).T*self.mask.T).T)
     
@@ -150,23 +181,28 @@ class Matcher:
         # get the diameter of each object given each pairing
         d_A = np.zeros_like(self.mask) * np.nan
         d_B = np.zeros_like(self.mask) * np.nan
+        dx_A = np.zeros_like(self.mask) * np.nan
+        dx_B = np.zeros_like(self.mask) * np.nan
         for aii,ai in enumerate(df_A.index):
             d_A_px = df_A.loc[ai,'d_px']
             for bii,bi in enumerate(df_B.index):
                 d_B_px = df_B.loc[bi,'d_px']
                 if np.isnan(self.mask[aii,bii])==False:
-                    d_A[aii,bii] = d_A_px * calc_dx((df_A.loc[ai,'x'],df_A.loc[ai,'y']),self.locs[aii,bii,:],calib_A,d_px=1,axes=None)
-                    d_B[aii,bii] = d_B_px * calc_dx((df_B.loc[bi,'x'],df_B.loc[bi,'y']),self.locs[aii,bii,:],calib_B,d_px=1,axes=None)
+                    dx_A[aii,bii] = calc_dx((df_A.loc[ai,'x'],df_A.loc[ai,'y']),self.locs[aii,bii,:],calib_A,d_px=1,axes=None)
+                    dx_B[aii,bii] = calc_dx((df_B.loc[bi,'x'],df_B.loc[bi,'y']),self.locs[aii,bii,:],calib_B,d_px=1,axes=None)
+                    d_A[aii,bii] = d_A_px * dx_A[aii,bii]
+                    d_B[aii,bii] = d_B_px * dx_B[aii,bii]
+        self.dx_AB = np.moveaxis(np.array([dx_A,dx_B]),0,-1) # [ai,bi,which_view]
         self.diameters_AB = np.moveaxis(np.array([d_A,d_B]),0,-1) # [ai,bi,which_view]
-        self.diameter_diffs = np.diff(self.diameters_AB,axis=-1)[...,0]
-        self.diameter_means = np.mean(self.diameters_AB,axis=-1)
+        self.diameter_diffs = np.abs(np.diff(self.diameters_AB,axis=-1))[...,0]
+        self.diameters = np.mean(self.diameters_AB,axis=-1)
         
     def _mask_on_diameter_difference(self):
         '''Set mask to nan for pairings for which the difference in diameter
         (as computed between the two views) is too large
         '''
-        relative_size_error = np.abs(self.diameter_diffs)/self.diameter_means
-        is_bad_size = (relative_size_error > self.params['rel_size_error_thresh']) & (self.diameter_means > self.params['min_d_for_rel_size_criteria'])
+        relative_size_error = self.diameter_diffs/self.diameters
+        is_bad_size = (relative_size_error > self.params['rel_size_error_thresh']) & (self.diameters > self.params['min_d_for_rel_size_criteria'])
         print(is_bad_size)
         self.mask[is_bad_size] = np.nan
         
@@ -179,7 +215,10 @@ class Matcher:
         df_B = self.df_B
                 
         def _nan_pairs(aii,bii):
-            # mask pairing once it's been established
+            '''
+            Mask a pairing once it's established, so it's not again added as a 
+            pair in a later round of pairing.
+            '''
             mask[aii,bii] = np.nan
         
         # list to store the pairs, list of (ix_A,ix_B) tuples
@@ -187,10 +226,8 @@ class Matcher:
         
         # handle the easy ones first, where both row/column have just one match
         for aii in range(len(df_A)):
-            ai = df_A.index[aii]
             if np.nansum(mask[aii,:])==1:
                 bii = np.squeeze(np.argwhere(np.atleast_1d(mask[aii,:])==1))
-                bi = df_B.index[bii]
                 if np.nansum(mask[:,bii])==1:
                     pairs_i.append((aii,bii))
                     _nan_pairs(aii,bii)
@@ -207,42 +244,60 @@ class Matcher:
                 aii_dist = np.squeeze(np.nanargmin(errs[:,bii]))
                 aii_size = np.squeeze(np.nanargmin(diameter_diffs[:,bii]))
                 if aii==aii_dist==aii_size and ~np.isnan(mask[aii,bii]):
-                    ai = df_A.index[aii]
-                    bi = df_B.index[bii]
                     pairs_i.append((aii,bii))
                     _nan_pairs(aii,bii)
                                         
         # pair the ones that are each other's min for both dist and size error
-        #for ai in errs.index:
         for aii in [aii for aii in range(len(df_A)) if not (aii in np.array(pairs_i)[:,0]) and ~np.all(np.isnan(errs[aii,:]))]:
             
             bii = np.squeeze(np.nanargmin(errs[aii,:])) # bii index of smallest distance error
 
             aii_of_bii = np.squeeze(np.nanargmin(errs[:,bii]))
             if aii==aii_of_bii and ~np.isnan(mask[aii,bii]):
-                ai = df_A.index[aii]
-                bi = df_B.index[bii]
                 pairs_i.append((aii,bii))
                 _nan_pairs(aii,bii)
                                     
-        # Return the results
-        pair_locs = []
-        pair_errs = []
+        # make a list of the pairs by the dataframe index
         pairs = []
         for pair_i in pairs_i:
             aii,bii = pair_i
-            ai = df_A.index[aii]
-            bi = df_B.index[bii]
-            pairs.append((ai,bi))
-            pair_locs.append(self.locs[aii,bii,:])
-            pair_errs.append(errs[aii,bii])
+            pairs.append((df_A.index[aii],df_B.index[bii]))
             
-        return pairs,pair_locs,pair_errs
+        self.pairs = pairs # indicies of DataFrames
+        self.pairs_i = pairs_i # indicies of arrays
+            
+        return pairs, pairs_i
+    
+    def _pairs_to_df(self,pairs=None):
+        
+        if pairs is None:
+            pairs = self.pairs
+            
+        # put the results (location, error, 2d properties) in a dataframe
+        props_2d = ['x','y','d_px','orientation','eccentricity','perimeter_px','min_axis_px','maj_axis_px']
+        j = 0
+        for pair in pairs:
+            aii = np.squeeze(np.argwhere(self.df_A.index==pair[0]))
+            bii = np.squeeze(np.argwhere(self.df_B.index==pair[1]))
+            self.df.loc[j,['x','y','z']] = self.locs[aii,bii,:]
+            self.df.loc[j,'frame'] = self.df_A.loc[pair[0],'frame']
+            self.df.loc[j,'err'] = self.errs[aii,bii]
+            for suffix,df_use,i in zip(['A','B'],[self.df_A,self.df_B],[0,1]):
+                for prop in props_2d:
+                    self.df.loc[j,prop+'_'+suffix] = df_use.loc[pair[i],prop]
+                self.df.loc[j,'ix'+suffix] = pair[i]
+                self.df.loc[j,'dx_'+suffix] = self.dx_AB[aii,bii,i]
+                self.df.loc[j,'d_'+suffix] = self.df.loc[j,'d_px_'+suffix] * self.df.loc[j,'dx_'+suffix]
+            j = j+1
+        self.df['d'] = self.df[['d_A','d_B']].mean(axis=1)
+        
+        return self.df
         
     def match(self):
         
         # mask based on the epipolar distances
-        self._mask_on_dist_to_epipolar()
+        if self.params['epipolar_dist_thresh_px'] is not None:
+            self._mask_on_dist_to_epipolar()
         
         # compute the pairings of all points not masked
         self._get_all_pairings()
@@ -257,9 +312,10 @@ class Matcher:
         self._apply_mask()
         
         # find the pairs
-        pairs,pair_locs,pair_errs = self._find_pairs()
+        _ = self._find_pairs()
+        _ = self._pairs_to_df()
         
-        return pairs,pair_locs,pair_errs
+        return self.df
     
 def find_pairs_v2(df_A,df_B,stereo_system,ray_sep_thresh=1e-3,rel_size_error_thresh=0.5,y_lims=[-np.inf,np.inf]): # y_lims=[.029,0.25]
     '''
@@ -361,11 +417,13 @@ def find_pairs_v2(df_A,df_B,stereo_system,ray_sep_thresh=1e-3,rel_size_error_thr
     d_B = np.zeros_like(dists)
     for aii,ai in enumerate(df_A.index):
         d_A_px = df_A.loc[ai,'d_px']
+        dx_A = self.dx_AB[aii,bii,0]
         for bii,bi in enumerate(df_B.index):
             d_B_px = df_B.loc[bi,'d_px']
+            dx_B = self.dx_AB[aii,bii,1]
             if np.isnan(mask[aii,bii])==False:
-                d_A[aii,bii] = d_A_px * calc_dx((df_A.loc[ai,'x'],df_A.loc[ai,'y']),pairings[aii,bii,:],calib_A,d_px=1,axes=None)
-                d_B[aii,bii] = d_B_px * calc_dx((df_B.loc[bi,'x'],df_B.loc[bi,'y']),pairings[aii,bii,:],calib_B,d_px=1,axes=None)
+                d_A[aii,bii] = d_A_px * dx_A
+                d_B[aii,bii] = d_B_px * dx_B
                 
     # mask the ones which are too far apart in size
     relative_size_error = np.abs(d_A-d_B)/(.5*(d_A+d_B))
