@@ -147,9 +147,13 @@ class CameraCalibration:
         Z = XYZ_center[2]+bounds
         self.inverse = build_inverse_interpolator(X,Y,Z,self,err_thresh=err_thresh)
         
-    def plot_known_vs_predicted(self):
+    def plot_known_vs_predicted(self,axs=None):
         
-        fig,axs = plt.subplots(2,2,figsize=(10,9))
+        if axs is None:
+            newfig = True
+            fig,axs = plt.subplots(2,2,figsize=(10,9))
+        else:
+            newfig = False
         
         for row_i, comp_i, phys_dir in zip([0,1],[0,2],['X','Z']):
         
@@ -185,7 +189,8 @@ class CameraCalibration:
             ax.legend(title='Plane $Y$ [mm]')
             ax.set_title('known vs values from linear rays')
         
-        fig.tight_layout()
+        if newfig:
+            fig.tight_layout()
         
 class CalibrationPlanes:
     '''
