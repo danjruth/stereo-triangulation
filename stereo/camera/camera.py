@@ -45,8 +45,8 @@ class CameraCalibration:
     def __init__(self,object_points,image_points,im_shape,n_x_interpolate=10,n_y_interpolate=11):
         
         self.image_points = image_points.reset_index(drop=True)#[['x','y']].copy()
-        print('MULTIPLYING Y BY 10!!!!!!!!!!!!!!!!!')
-        object_points['Y'] = object_points['Y']*10
+        #print('MULTIPLYING Y BY 10!!!!!!!!!!!!!!!!!')
+        #object_points['Y'] = object_points['Y']*10
         self.object_points = object_points[['X','Y','Z']].copy().reset_index(drop=True)
         self.im_shape = im_shape
         self.Y_lims = np.array([self.object_points['Y'].min(),self.object_points['Y'].max()])
