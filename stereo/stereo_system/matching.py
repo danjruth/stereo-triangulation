@@ -225,7 +225,7 @@ class Matcher:
                     _nan_pairs(aii,bii)
             
         # pair the ones that are each other's min for both dist and size error
-        for aii in [aii for aii in range(len(df_A)) if not (aii in np.array(pairs_i)[:,0]) and ~np.all(np.isnan(errs[aii,:]))]:
+        for aii in [aii for aii in range(len(df_A)) if not (aii in np.atleast_2d(pairs_i)[:,0]) and ~np.all(np.isnan(errs[aii,:]))]:
             
             bii_dist = np.squeeze(np.nanargmin(errs[aii,:])) # bii index of smallest distance error
             bii_size = np.squeeze(np.nanargmin(diameter_diffs[aii,:])) # bii index of smallest diameter error
@@ -238,7 +238,7 @@ class Matcher:
                     _nan_pairs(aii,bii)
                                         
         # pair the ones that are each other's min for both dist and size error
-        for aii in [aii for aii in range(len(df_A)) if not (aii in np.array(pairs_i)[:,0]) and ~np.all(np.isnan(errs[aii,:]))]:
+        for aii in [aii for aii in range(len(df_A)) if not (aii in np.atleast_2d(pairs_i)[:,0]) and ~np.all(np.isnan(errs[aii,:]))]:
             
             # bii of smallest distance error of aii
             bii = np.squeeze(np.nanargmin(errs[aii,:]))
@@ -247,7 +247,7 @@ class Matcher:
             aii_of_bii = np.squeeze(np.nanargmin(errs[:,bii]))
             
             # if these two are the same, make a pair
-            if aii==aii_of_bii and ~np.isnan(mask[aii,bii]) and not (bii in np.array(pairs_i)[:,1]):
+            if aii==aii_of_bii and ~np.isnan(mask[aii,bii]) and not (bii in np.atleast_2d(pairs_i)[:,1]):
                 pairs_i.append((aii,bii))
                 _nan_pairs(aii,bii)
                                     
@@ -276,6 +276,8 @@ class Matcher:
             self.df.loc[j,['x','y','z']] = self.locs[aii,bii,:]
             self.df.loc[j,'frame'] = self.df_A.loc[pair[0],'frame']
             self.df.loc[j,'err'] = self.errs[aii,bii]
+            if self.params['epipolar_dist_thresh_px'] is not None:
+                self.df.loc[j,'dist_to_epipolar'] = self.dists_to_epipolar[aii,bii]
             for suffix,df_use,i in zip(['A','B'],[self.df_A,self.df_B],[0,1]):
                 for prop in props_2d:
                     self.df.loc[j,prop+'_'+suffix] = df_use.loc[pair[i],prop]
@@ -310,3 +312,15 @@ class Matcher:
         _ = self._pairs_to_df()
         
         return self.df
+    
+def match_multiple_frames(df_A,df_B,ss,frames=None,params={}):
+    '''Match multiple frames; same syntax as Matcher, but with frames as a
+    list-like'''
+    if frames is None:
+        frames = df_A['frames'].unique().values
+    dfs_3d = []
+    for fi,f in enumerate(frames):
+        print('...matching frome '+str(f))
+        m = Matcher(df_A.copy(),df_B.copy(),ss,frame=f,params=params)
+        dfs_3d.append(m.match())
+    return pd.concat(dfs_3d,ignore_index=True)
