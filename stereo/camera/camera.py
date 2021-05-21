@@ -102,15 +102,17 @@ class CameraCalibration:
         ax.set_xlim(self.im_shape[0]+0.5,-0.5,)
         ax.set_aspect('equal')
     
-    def draw_bounding_rays(self,ax,color='k',alpha=0.5,lw=3,ls='-'):
+    def draw_bounding_rays(self,ax,color='k',alpha=0.5,lw=3,ls='-',Y=None):
+        if Y is None:
+            Y = self.Y_lims
         # plot the fit straight line for these points
-        linear_ray = self(0,0)
+        linear_ray = self(0,0,Y=Y)
         ax.plot(linear_ray[:,0],linear_ray[:,1],linear_ray[:,2],ls,color=color,alpha=alpha,lw=lw)
-        linear_ray = self(self.im_shape[1],0)
+        linear_ray = self(self.im_shape[1],0,Y=Y)
         ax.plot(linear_ray[:,0],linear_ray[:,1],linear_ray[:,2],ls,color=color,alpha=alpha,lw=lw)
-        linear_ray = self(self.im_shape[1],self.im_shape[0])
+        linear_ray = self(self.im_shape[1],self.im_shape[0],Y=Y)
         ax.plot(linear_ray[:,0],linear_ray[:,1],linear_ray[:,2],ls,color=color,alpha=alpha,lw=lw)
-        linear_ray = self(0,self.im_shape[0])
+        linear_ray = self(0,self.im_shape[0],Y=Y)
         ax.plot(linear_ray[:,0],linear_ray[:,1],linear_ray[:,2],ls,color=color,alpha=alpha,lw=lw)
     
     def draw_interpolant_lines(self,ax,draw_calib_points=False,color='b',with_dots=True):

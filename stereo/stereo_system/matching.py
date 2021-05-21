@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.patches import ConnectionPatch
+import joblib
+import time
 
 from .stereo_system import find_epipolar_line_given_otherpx
 from ..camera.camera import calc_dx
@@ -223,6 +225,7 @@ class Matcher:
                 if np.nansum(mask[:,bii])==1:
                     pairs_i.append((aii,bii))
                     _nan_pairs(aii,bii)
+        
             
         # pair the ones that are each other's min for both dist and size error
         for aii in [aii for aii in range(len(df_A)) if not (aii in np.atleast_2d(pairs_i)[:,0]) and ~np.all(np.isnan(errs[aii,:]))]:
@@ -313,14 +316,24 @@ class Matcher:
         
         return self.df
     
-def match_multiple_frames(df_A,df_B,ss,frames=None,params={}):
+def match_multiple_frames(df_A,df_B,ss,frames=None,params={},n_threads=1):
     '''Match multiple frames; same syntax as Matcher, but with frames as a
     list-like'''
     if frames is None:
         frames = df_A['frames'].unique().values
-    dfs_3d = []
-    for fi,f in enumerate(frames):
-        print('...matching frome '+str(f))
+    
+    def match_frame(f):
+        print('...matching frame '+str(f))
         m = Matcher(df_A.copy(),df_B.copy(),ss,frame=f,params=params)
-        dfs_3d.append(m.match())
+        return m.match()
+    
+    if n_threads>1:
+        print('Attempting to process '+str(len(frames))+' in parallel with '+str(n_threads)+' jobs...')
+        t1 = time.time()
+        dfs_3d = joblib.Parallel(n_threads)(joblib.delayed(match_frame)(f) for f in frames)
+        print('...completed in '+str(time.time()-t1)+' s!')
+    else:
+        dfs_3d = []
+        for fi,f in enumerate(frames):
+            dfs_3d.append(match_frame(f))
     return pd.concat(dfs_3d,ignore_index=True)
