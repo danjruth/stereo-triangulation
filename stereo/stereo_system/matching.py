@@ -328,7 +328,7 @@ def match_multiple_frames(df_A,df_B,ss,frames=None,params={},n_threads=1):
         return m.match()
     
     if n_threads>1:
-        print('Attempting to match '+str(len(frames))+'frames in parallel with '+str(n_threads)+' jobs...')
+        print('Attempting to match '+str(len(frames))+' frames in parallel with '+str(n_threads)+' jobs...')
         t1 = time.time()
         dfs_3d = joblib.Parallel(n_threads)(joblib.delayed(match_frame)(f) for f in frames)
         print('...completed in '+'{:0.1f}'.format(time.time()-t1)+' s!')
