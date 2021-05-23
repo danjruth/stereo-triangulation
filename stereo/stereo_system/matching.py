@@ -216,7 +216,7 @@ class Matcher:
             pass
         
         # list to store the pairs, list of (ix_A,ix_B) tuples
-        pairs_i = [] # [aii,bii]
+        pairs_i = [[np.nan,np.nan]] # [aii,bii]
         
         # handle the easy ones first, where both row/column have just one match
         for aii in range(len(df_A)):
@@ -256,6 +256,7 @@ class Matcher:
                                     
         # make a list of the pairs by the dataframe index
         pairs = []
+        pairs_i = [p for p in pairs_i if ~np.isnan(p[0])]
         for pair_i in pairs_i:
             aii,bii = pair_i
             pairs.append((df_A.index[aii],df_B.index[bii]))
