@@ -10,8 +10,8 @@ import scipy.interpolate
 from wwudel.run.bulkbubbles.intermediate import load_stereo_system
 import numpy as np
 
-calib_folder = r'E:\210525\\'
-calib_name = r'stereo_calibration_D'
+calib_folder = r'E:\210524\\'
+calib_name = r'stereo_calibration_210524'
 
 # rise velocity
 #calib_folder = r'E:\200722\\'
