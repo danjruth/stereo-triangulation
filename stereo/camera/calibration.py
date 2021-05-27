@@ -21,8 +21,9 @@ def _refine_click_point_auto(im,click,box_size=10,rescale_factor=5):
     # get, rescale, and filter the image region around the clicked point
     point_int = np.round(click).astype(int)    
     im_region = im[point_int[1]-box_size:point_int[1]+box_size,point_int[0]-box_size:point_int[0]+box_size]
-    im_region_rescale = skimage.transform.rescale(im_region,rescale_factor,anti_aliasing=True)
+    im_region_rescale = skimage.transform.rescale(im_region,rescale_factor,order=0)
     im_region_rescale_filt = scipy.ndimage.gaussian_filter(im_region_rescale,rescale_factor)
+    #im_region_rescale_filt = im_region_rescale
     
     # refine the point and convert back to original scaling
     pt_refined_region_rescale = np.flip(np.unravel_index(im_region_rescale_filt.argmin(), im_region_rescale_filt.shape)) # x,y

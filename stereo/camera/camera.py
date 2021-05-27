@@ -569,11 +569,8 @@ def build_inverse_interpolator(X,Y,Z,calib,err_thresh=1e-4):
         A function which returns pixel (x,y) coordinates corresponding to given
         XYZ locations, with the shape depending on the shape of XYZ
     '''
-    
-    print(np.shape(X))
-    
+        
     # get the xy points at each
-    print('getting the xy points at each location...')
     XYZ_all = np.zeros((len(X),len(Y),len(Z),3))
     xy_px = np.zeros((len(X),len(Y),len(Z),2))
     err = np.zeros((len(X),len(Y),len(Z)))
@@ -598,8 +595,6 @@ def build_inverse_interpolator(X,Y,Z,calib,err_thresh=1e-4):
     xy_px[...,1] = xy_px[...,1]*mask
             
     # create inerpolators for the pixel x and y locations
-    print('creating the interpolators...')
-    [print(np.shape(a)) for a in (X,Y,Z)]
     interp_x = scipy.interpolate.RegularGridInterpolator((X,Y,Z),xy_px[...,0],bounds_error=False,fill_value=None,method='linear')
     interp_y = scipy.interpolate.RegularGridInterpolator((X,Y,Z),xy_px[...,1],bounds_error=False,fill_value=None,method='linear')
     

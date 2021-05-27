@@ -207,7 +207,7 @@ class Matcher:
         df_A = self.df_A
         df_B = self.df_B
                 
-        def _nan_pairs(aii,bii):
+        def _nan_pairs(_1,_2):
             '''
             Mask a pairing once it's established, so it's not again added as a 
             pair in a later round of pairing.
@@ -232,7 +232,7 @@ class Matcher:
             
             bii_dist = np.squeeze(np.nanargmin(errs[aii,:])) # bii index of smallest distance error
             bii_size = np.squeeze(np.nanargmin(diameter_diffs[aii,:])) # bii index of smallest diameter error
-            if bii_dist==bii_size and not (bii in np.array(pairs_i)[:,1]):
+            if bii_dist==bii_size and not (bii_dist in np.array(pairs_i)[:,1]):
                 bii = bii_dist
                 aii_dist = np.squeeze(np.nanargmin(errs[:,bii]))
                 aii_size = np.squeeze(np.nanargmin(diameter_diffs[:,bii]))
@@ -289,7 +289,8 @@ class Matcher:
                 self.df.loc[j,'dx_'+suffix] = self.dx_AB[aii,bii,i]
                 self.df.loc[j,'d_'+suffix] = self.df.loc[j,'d_px_'+suffix] * self.df.loc[j,'dx_'+suffix]
             j = j+1
-        self.df['d'] = self.df[['d_A','d_B']].mean(axis=1)
+        if len(self.df)>0:
+            self.df['d'] = self.df[['d_A','d_B']].mean(axis=1)
         
         return self.df
         
