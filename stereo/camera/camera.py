@@ -194,7 +194,7 @@ class CameraCalibration:
         if newfig:
             fig.tight_layout()
             
-    def plot_err_vs_y(self,axs):
+    #def plot_err_vs_y(self,axs):
         
 class CalibrationPlanes:
     '''
