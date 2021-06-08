@@ -18,7 +18,7 @@ from ..camera.camera import calc_dx
 DEFAULT_MATCH_PARAMS = {'ray_sep_thresh':1e-3, # [m], separation between rays
                         'rel_size_error_thresh':0.5, # max allowable of abs(d_A-d_B)/(0.5*(d_A+d_B))
                         'min_d_for_rel_size_criteria':2e-3, # [m], value of 0.5*(d_A+d_B) below which rel_size_error_thresh is not applied
-                        'epipolar_dist_thresh_px':None}    
+                        'epipolar_dist_thresh_px':None}
 class Matcher:
     '''
     Match the objects that are detected in two images with an instance of a 
@@ -39,13 +39,34 @@ class Matcher:
         The parameters for the matching. DEFAULT_MATCH_PARAMS is used by 
         default, and key-value pairs from params overwrite the default values.
         
+        Key-value pairs are:
+            ray_sep_thresh : float
+                The maximum allowable triangulation error (the shortest
+                distance between two light rays paired as the same object) in
+                meters.
+            rel_size_error_thresh : float
+                The max allowable value of abs(d_A-d_B)/(0.5*(d_A+d_B)), where
+                d_A and d_B are the object sizes as determined between the two
+                views. This filteirng is only applied to pairings for which the
+                average of the two sizes is greater than 
+                min_d_for_rel_size_criteria.
+            min_d_for_rel_size_criteria : float
+                The minimum object size of a pairing for which the relative 
+                size filtering is applied, in meters.
+            epipolar_dist_thresh_px : float or None
+                The maximum allowable distance an object in image B can be from
+                the epipolar line of its paired image from image A. This can be
+                used to speed up the pairing so long as view B has a working
+                inverse interpolator. If None, this filtering is not applied 
+                during the matching.
+        
     frame : None or int, optional
         If not None, df_A and df_B are filtered to only include rows for which
         the "frame" column is equal to frame (to avoid filtering the dataframe
         manually as the class is initialized.)
     '''
     
-    def __init__(self,df_A,df_B,stereo_system,params={},frame=None):
+    def __init__(self,df_A,df_B,stereo_system,params=None,frame=None):
         
         if frame is not None:
             df_A = df_A[df_A['frame']==frame]
@@ -57,8 +78,9 @@ class Matcher:
 
         # set matcher params
         self.params = DEFAULT_MATCH_PARAMS.copy()
-        for key in params:
-            self.params[key] = params[key]
+        if params is not None:
+            for key in params:
+                self.params[key] = params[key]
             
         # initialize arrays in which pairing data will be stored
         self.locs = np.zeros((len(df_A),len(df_B),3)).astype(float) * np.nan
@@ -73,6 +95,9 @@ class Matcher:
         self.df = pd.DataFrame(columns=['x','y','z','frame','err'])
         
     def show_state(self,):
+        '''Make a figure with plots showing detected objects in each view, and 
+        lines connecting paired objects.        
+        '''
         
         fig,axs = plt.subplots(1,2,figsize=(9,4))
         
@@ -295,6 +320,11 @@ class Matcher:
         return self.df
         
     def match(self):
+        '''Run the matching procedure. First, filters out pairings based on the
+        distance to the epipolar lines, then masks on other quantities, then
+        finds the pairings, then puts results into a DataFrame, which is 
+        returned.
+        '''
         
         # mask based on the epipolar distances
         if self.params['epipolar_dist_thresh_px'] is not None:
