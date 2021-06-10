@@ -4,7 +4,10 @@ Created on Wed Mar 24 15:55:00 2021
 
 @author: druth
 
-Following the procedure in 
+Following the procedure in Machicoane, N., Aliseda, A., Volk, R., & Bourgoin, 
+M. (2019). A simplified and versatile calibration method for multi-camera 
+optical systems in 3D particle imaging. Review of Scientific Instruments, 
+90(3), 035112.
 """
 
 import numpy as np
