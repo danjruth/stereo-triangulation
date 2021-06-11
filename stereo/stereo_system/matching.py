@@ -349,8 +349,54 @@ class Matcher:
         return self.df
     
 def match_multiple_frames(df_A,df_B,ss,frames=None,params={},n_threads=1):
-    '''Match multiple frames; same syntax as Matcher, but with frames as a
-    list-like'''
+    '''
+    Match multiple frames; same syntax as Matcher, but with frames as a
+    list-like.
+    
+    Parameters
+    ----------
+
+    df_A, df_B : pd.DataFrame
+        Dataframes containing information about the detected 2-d objects in the 
+        two views. Must contain the columns x and y, which give the pixel 
+        location of the object, and d_px, which is the diameter of the object
+        in pixels. Must contain the column 'frame', giving the frame in which
+        each object is detected. Frame x in df_A must correspond to frame x in
+        df_B.
+        
+    stereo_system : stereo.stereo_system.StereoSystem
+        The stereo system for the two views.
+        
+    params : dict, optional
+        The parameters for the matching. DEFAULT_MATCH_PARAMS is used by 
+        default, and key-value pairs from params overwrite the default values.
+        
+        Key-value pairs are:
+            ray_sep_thresh : float
+                The maximum allowable triangulation error (the shortest
+                distance between two light rays paired as the same object) in
+                meters.
+            rel_size_error_thresh : float
+                The max allowable value of abs(d_A-d_B)/(0.5*(d_A+d_B)), where
+                d_A and d_B are the object sizes as determined between the two
+                views. This filteirng is only applied to pairings for which the
+                average of the two sizes is greater than 
+                min_d_for_rel_size_criteria.
+            min_d_for_rel_size_criteria : float
+                The minimum object size of a pairing for which the relative 
+                size filtering is applied, in meters.
+            epipolar_dist_thresh_px : float or None
+                The maximum allowable distance an object in image B can be from
+                the epipolar line of its paired image from image A. This can be
+                used to speed up the pairing so long as view B has a working
+                inverse interpolator. If None, this filtering is not applied 
+                during the matching.
+        
+    frames : list-like or None
+        The frames for which to perform the matching. If None, it is taken as
+        all the unique frames in df_A.
+    
+    '''
     if frames is None:
         frames = df_A['frames'].unique().values
     
