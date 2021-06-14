@@ -14,8 +14,8 @@ from matplotlib.patches import Rectangle, Ellipse
 import os
 import pandas as pd
 
-base_folder = r'F:\calibration\bulkstereo\\stereo_calibration_20210526_A\\'
-camera_name = '40026941'
+base_folder = r'W:\calibration\bulkstereo\\stereo_calibration_20210612_A\\'
+camera_name = '40026942'
 
 class CameraCalibrationGUI:
     
@@ -162,6 +162,8 @@ class CameraCalibrationGUI:
         fpath_save = self.folder+self.current_fname+'.pkl'
         df.to_pickle(fpath_save)
         self.update_folder_view(None)
+        self.box_xvals.set_val('') 
+        self.box_zvals.set_val('')       
         
     def create_calibration(self,_):
         
