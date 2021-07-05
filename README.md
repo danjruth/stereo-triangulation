@@ -21,3 +21,7 @@ df_A, df_B = your_function_to_load_your_2D_data()
 m = Matcher(df_A,df_B,ss)
 df_3d = Matcher.match()
 ```
+
+## Installation
+
+Download the code to your computer, then run `pip install -e .` .
