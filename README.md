@@ -1,7 +1,5 @@
 # stereo-triangulation
-Find the 3-D position of objects using two cameras. The first part, following [**Machicoane, N., Aliseda, A., Volk, R., & Bourgoin, M. (2019). A simplified and versatile calibration method for multi-camera optical systems in 3D particle imaging. Review of Scientific Instruments, 90(3), 035112**](https://aip.scitation.org/doi/full/10.1063/1.5080743), enables the mapping of camera pixel locations optical paths in 3-D space, given a set of calibration images that can be obtained by moving a planar calibration target along an axis. The second part enables the "matching" of objects between two 2-D views, yielding their 3-D position, by finding the near-intersection of the optical paths corresponding to the detected object in each view.
-
-If you use this code to implement the calibration approach described in [Machicoane et al.](https://aip.scitation.org/doi/full/10.1063/1.5080743), please cite that paper. 
+Find the 3-D position of objects using two cameras. The first part, following [Machicoane _et al._](https://aip.scitation.org/doi/full/10.1063/1.5080743) [**1**], enables the mapping of camera pixel locations optical paths in 3-D space, given a set of calibration images that can be obtained by moving a planar calibration target along an axis. The second part enables the "matching" of objects between two 2-D views, yielding their 3-D position, by finding the near-intersection of the optical paths corresponding to the detected object in each view.
 
 ## Sample usage
 
@@ -27,3 +25,7 @@ df_3d = Matcher.match()
 ## Installation
 
 Download the code to your computer, then run `pip install -e .` .
+
+## References
+
+**[1]** [Machicoane, N., Aliseda, A., Volk, R., & Bourgoin, M. (2019). A simplified and versatile calibration method for multi-camera optical systems in 3D particle imaging. _Review of Scientific Instruments_, 90(3), 035112.](https://aip.scitation.org/doi/full/10.1063/1.5080743)
