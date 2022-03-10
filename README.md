@@ -22,6 +22,10 @@ m = Matcher(df_A,df_B,ss)
 df_3d = Matcher.match()
 ```
 
+## Calibration GUI
+
+After obtaining images of a calibration target obtained following [1], place them in directories `BASE_FOLDER\CAMERA_NAME_1\` and `BASE_FOLDER\CAMERA_NAME_2\` and run the GUI script [`stereo-triangulation/scripts/calibration_gui.py`](scripts/calibration_gui.py) once for each camera, changing the variables `base_folder` and `camera_name` appropriately. The GUI facilitates the construction of the calibration files for each camera that are used in initializing a `StereoSystem`.
+
 ## Installation
 
 Download the code to your computer, then run `pip install -e .` .
