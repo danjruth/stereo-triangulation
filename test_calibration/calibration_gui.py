@@ -14,8 +14,8 @@ from matplotlib.patches import Rectangle, Ellipse
 import os
 import pandas as pd
 
-base_folder = r'W:\calibration\bulkstereo\\stereo_calibration_20210612_A\\'
-camera_name = '40026942'
+base_folder = r'L:\DWWE\calibration\bulkstereo\\stereo_calibration_20210605_A\\'
+camera_name = '40026941'
 
 class CameraCalibrationGUI:
     
