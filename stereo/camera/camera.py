@@ -3,6 +3,11 @@
 Created on Wed Mar 24 15:55:00 2021
 
 @author: druth
+
+Following the procedure in Machicoane, N., Aliseda, A., Volk, R., & Bourgoin, 
+M. (2019). A simplified and versatile calibration method for multi-camera 
+optical systems in 3D particle imaging. Review of Scientific Instruments, 
+90(3), 035112.
 """
 
 import numpy as np
@@ -45,8 +50,6 @@ class CameraCalibration:
     def __init__(self,object_points,image_points,im_shape,n_x_interpolate=10,n_y_interpolate=11):
         
         self.image_points = image_points.reset_index(drop=True)#[['x','y']].copy()
-        #print('MULTIPLYING Y BY 10!!!!!!!!!!!!!!!!!')
-        #object_points['Y'] = object_points['Y']*10
         self.object_points = object_points[['X','Y','Z']].copy().reset_index(drop=True)
         self.im_shape = im_shape
         self.Y_lims = np.array([self.object_points['Y'].min(),self.object_points['Y'].max()])
@@ -88,10 +91,28 @@ class CameraCalibration:
     def __call__(self,x,y,Y=None):
         '''
         Get the endpoints of the linear fitted ray line segment.
+        
+        Parameters
+        ----------
+        
+        x,y : float
+            Pixel location of the object in the image.
+            
+        Y : float 
+            Physical values of Y at which to find the associated (X,Z)
+            locations.
+            
+        Returns
+        -------
+        
+        ray_segment : np.ndarray
+            The (X,Y,Z) coordinates of the physical locations corresponding to
+            the Y values in Y.        
         '''
         if Y is None:
             Y = self.Y_lims
-        return self.linear_ray_coefs.get_ray_segment(x,y,Y)
+        ray_segment = self.linear_ray_coefs.get_ray_segment(x,y,Y)
+        return ray_segment
     
     def set_axes_lims(self,ax,):
         '''
@@ -234,6 +255,20 @@ class CalibrationPlanes:
     def __call__(self,x,y):
         '''Calculate the (X,Y,Z) value of the ray's intersection with each
         plane via interpolation.
+        
+        Parameters
+        ----------
+        
+        x,y : float
+            The pixel location in an image
+            
+        Returns
+        -------
+        
+        ray_intersections : np.ndarray
+            The (X,Y,Z) locations of the physical locations at which the ray
+            corresponding to the given pixel location passes through each of
+            the calibration planes.
         '''
         ray_intersections = []
         for yi,Y in enumerate(self.Y_planes):
@@ -251,6 +286,17 @@ class LinearRayCoefs:
     through any point in the image. Stores the values with which the 
     interpolation is done, and contains the __call__ method to compute the 
     values at a given point.
+    
+    Parameters
+    ----------
+    
+    interp_coefs : np.ndarray
+        The linear ray coefficients as returned by get_linear_ray_coeffs; see
+        documentation for that function.
+        
+    I_x, I_y : np.ndarray
+        2-D arrays giving the pixel x and y interpolation locations
+        corresponding to the ray coefficients in interp_coefs
     '''
     
     def __init__(self,interp_coefs,I_x,I_y):
@@ -259,6 +305,9 @@ class LinearRayCoefs:
         self.I_y = I_y.copy()
         
     def _get_coefs(self,x,y,viz=False,spline_order=3):
+        '''
+        Perform the interpolation to give the ray coefficients 
+        '''
                 
         # get the x coefs
         aX = scipy.interpolate.RectBivariateSpline(self.I_x[0,:],self.I_y[:,0],self.interp_coefs[:,:,0,0].T,kx=spline_order,ky=spline_order)(x,y,grid=False)
@@ -276,6 +325,16 @@ class LinearRayCoefs:
         return coefs
         
     def __call__(self,x,y,viz=False):
+        '''
+        Get the linear ray coefficients for a given (x,y) pixel location.
+        
+        Parameters
+        ----------
+        
+        x,y : float or 1-d arrays of floats
+            The x and y pixel locations for which to get linear ray 
+            coefficients
+        '''
         
         if np.isscalar(x):
             return self._get_coefs(x,y,viz=viz)
@@ -317,7 +376,7 @@ def calc_dx(xy_pix,point,calib,d_px=1,axes=None):
         The calibration object for the camera.
         
     d_px : float, optional
-        The small pixel displacement used to calculate the pixel size
+        The small pixel displacement used to calculate the pixel size.
         
     axes : matplotlib.Axes or None, optional
         The axes on which to illustrate the calculation.
@@ -326,7 +385,8 @@ def calc_dx(xy_pix,point,calib,d_px=1,axes=None):
     ----------
     
     dx : float
-        The mean of the pixel sizes in the camera's x and y directions.    
+        The mean of the pixel sizes in the camera's x and y directions, in 
+        meters.
     '''
     
     # get the ray coefficients for this point
@@ -350,7 +410,7 @@ def calc_dx(xy_pix,point,calib,d_px=1,axes=None):
             [[axp,bxp,],[_,_],[azp,bzp]] = ray_coefs_side
 
             # find the Y value at which the "right" ray intersects the object's plane
-            Yp = (ax*(X-bxp) + az*(Z-bzp)+Y) / (ax*axp+az*azp+1)
+            Yp = (ax*(X-bxp) + az*(Z-bzp) + Y) / (ax*axp+az*azp+1)
             
             # find the location of the intersection of this ray with the object's plane
             loc_p = coefs_to_points(ray_coefs_side,Yp)
@@ -524,11 +584,28 @@ def get_linear_ray_coeffs(ray_points_func,interpolant_x,interpolant_y):
 
 def coefs_to_points(coefs,Y):
     '''
-    Get line segment coordinates given the ray coefficients and the Y values
+    Get line segment coordinates given the ray coefficients and the Y values.
+    
+    Parameters
+    ----------
+    
+    coefs : 2-d np.ndarray
+        The linear ray coefficients.
+        
+    Y : float or 1-d np.ndarray
+        The physical Y values at which to evaluate the linear ray coefficients
+        
+    Returns
+    -------
+    
+    points : np.ndarray
+        The (X,Y,Z) locations of the intersection of the linear ray described 
+        by coefs and the value(s) in Y
     '''
     X = coefs[0,0]*Y+coefs[0,1]
     Z = coefs[2,0]*Y+coefs[2,1]
-    return np.array([X,Y,Z]).T
+    points = np.array([X,Y,Z]).T
+    return points
             
 def find_px_minimization(XYZ,calib):
     ''' find the (x,y) pixel location of the ray going through the point XYZ by
@@ -598,29 +675,9 @@ def build_inverse_interpolator(X,Y,Z,calib,err_thresh=1e-4):
     interp_x = scipy.interpolate.RegularGridInterpolator((X,Y,Z),xy_px[...,0],bounds_error=False,fill_value=None,method='linear')
     interp_y = scipy.interpolate.RegularGridInterpolator((X,Y,Z),xy_px[...,1],bounds_error=False,fill_value=None,method='linear')
     
-    
-    # points = np.array([XYZ_all[...,i].flatten() for i in range(3)]).T
-    # vals_x = xy_px[...,0].flatten()
-    # vals_y = xy_px[...,1].flatten()
-    # cond = (~np.isnan(vals_x)) * (~np.isnan(vals_y))
-    # points = points[cond,:]
-    # vals_x = vals_x[cond]
-    # vals_y = vals_y[cond]
-    # interp_x = scipy.interpolate.LinearNDInterpolator(points,vals_x,)
-    # interp_y = scipy.interpolate.LinearNDInterpolator(points,vals_y,)
-    
     # create a function for returning (x,y) given XYZ
     def interp(XYZ):
         return np.squeeze(np.array([interp_x(XYZ),interp_y(XYZ)]))
-    
-    # def interp(XYZ_find):
-        
-        
-        
-    #     print(np.shape(points))
-    #     print(np.shape(vals_x))
-    #     print(np.shape(XYZ_find))
-    #     return np.squeeze(np.array([scipy.interpolate.griddata(points,vals_x,XYZ_find),scipy.interpolate.griddata(points,vals_y,XYZ_find)]))
     
     return interp
 

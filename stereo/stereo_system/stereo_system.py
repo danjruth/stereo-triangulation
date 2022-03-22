@@ -28,7 +28,9 @@ class StereoSystem:
         in lims.
     '''
     
-    def __init__(self,calib_A,calib_B,lims=DEFAULT_SPATIAL_LIMS):        
+    def __init__(self,calib_A,calib_B,lims=None):
+        if lims is None:
+            lims = DEFAULT_SPATIAL_LIMS.copy()
         self.calibs = [calib_A,calib_B]
         
         # update the spatial limits
@@ -41,18 +43,55 @@ class StereoSystem:
         '''
         Given pixel coords for the two cameras, find the shortest line segment
         connection the two rays.
+        
+        Parameters
+        ----------
+        
+        xy_A, xy_B : list-like of length 2
+            The (x,y) pixel locations of image location as viewed by camera A
+            and camera B
+            
+        Returns
+        -------
+        
+        shortest_connection : np.ndarray
+            The endpoints of the line segment in physical space that represents
+            the shortest connection between the light rays corresponding to the
+            two pixel locations
         '''
         coefs_A = self.calibs[0].linear_ray_coefs(xy_A[0],xy_A[1])
         coefs_B = self.calibs[1].linear_ray_coefs(xy_B[0],xy_B[1])
-        return shortest_connection_two_rays(coefs_A,coefs_B)
+        shortest_connection = shortest_connection_two_rays(coefs_A,coefs_B)
+        return shortest_connection
     
     def __call__(self,xy_A,xy_B):
         '''
         Given pixel coords for the two cameras, find the probable 3d location
         and the error distance between the two rays.
+        
+        Parameters
+        ----------
+        
+        xy_A, xy_B : list-like of length 2
+            The (x,y) pixel locations of image location as viewed by camera A
+            and camera B
+            
+        Returns
+        -------
+        
+        midpoint : np.ndarray
+            The (X,Y,Z) location of the point that minimizes the total distance
+            to the two rays.
+            
+        triangulation_error : float
+            The shortest distance between the two rays, in m. Can be considered
+            triangulation error, since it is the amount by which the two rays
+            which nominally intersect do not actually intersect.        
         '''
         connection = self.find_shortest_connection(xy_A,xy_B)
-        return connection_midpoint(connection), connection_dist(connection)
+        midpoint = connection_midpoint(connection)
+        triangulation_error = connection_dist(connection)
+        return midpoint, triangulation_error 
     
 def shortest_connection_two_rays(coefs_A,coefs_B):
     '''
@@ -91,9 +130,19 @@ def connection_dist(connection):
 
 def dist_to_line(x0,coefs):
     '''
-    Return the distance from a point to a line
+    Return the distance from a point to a line.
+    
+    Parameters
+    ----------
+    
+    x0 : np.ndarray
+        The (X,Y,Z) location of the point.
+        
+    coefs : np.ndarray
+        The linear ray coefficients describing the line.
     '''
     
+    # evaluate the physical locations at arbitrary Y locations of 0 and 1
     x1 = coefs_to_points(coefs,0)
     x2 = coefs_to_points(coefs,1)
     
@@ -101,28 +150,26 @@ def dist_to_line(x0,coefs):
     d = np.linalg.norm(np.cross(x0-x1,x0-x2))/np.linalg.norm(x2-x1)
     return d
 
-def minimize_dist_n_lines(linear_ray_coefs):
-    '''
-    Find the point closest to n lines given by the list linear_ray_coefs
-    '''
+# def minimize_dist_n_lines(linear_ray_coefs):
+#     '''
+#     Find the point closest to n lines given by the list linear_ray_coefs
+#     '''
     
-    # a function which returns the error given the point location
-    def err(x0):
-        return np.sqrt(np.sum([dist_to_line(x0,coef)**2 for coef in linear_ray_coefs]))
+#     # a function which returns the error given the point location
+#     def err(x0):
+#         return np.sqrt(np.sum([dist_to_line(x0,coef)**2 for coef in linear_ray_coefs]))
     
-    # minimize the error to get the closest point
-    res = scipy.optimize.minimize(err,np.array([0,0,0]))
+#     # minimize the error to get the closest point
+#     res = scipy.optimize.minimize(err,np.array([0,0,0]))
     
-    return res.x,err(res.x)
-
-
+#     return res.x,err(res.x)
 
 def get_image_XYZ_coords(x_px,y_px,calib,XYZ_ref,xy_ref):
     '''
-    Get the (X,Y,Z) coordinates of each pixel in an image, when the image is
+    Get the (X,Y,Z) coordinates of pixels in an image, when the image is
     placed at a 3d reference location and oriented normal to the axis of the 
     camera which captured it. Can be used to with matplotlib's plot_surface to
-    show a correctly-oriented image in 3d.
+    show a correctly-oriented and correctly-placed image in 3d.
     
     Parameters
     -----------
@@ -180,26 +227,31 @@ def get_image_XYZ_coords(x_px,y_px,calib,XYZ_ref,xy_ref):
 
 def find_epipolar_line_given_otherpx(calib_A,calib_B,xy_A,Y_vals):
     '''
-    Find the pixel values in image B along which the image of an object
-    detected in image A may lie.
-    
+    For an object detected in image A, find the set of possible pixel values 
+    on which it might lie in image B. Relies on calib_B having an inverse 
+    interpolator as its .inverse attribute. Can be used in the matching 
+    algorithm to filter out objects in image B that are too far away (in the 
+    image) from a potential location.
+
     Parameters
-    -----------
-    calib_A,calib_B : CameraCalibration
-        The two camera calibrations
+    ----------
+    
+    calib_A, calib_B : stereo.camera.CameraCalibration
+        The camera calibration objects for the two views.
         
-    xy_A : list-like
-        The [x,y] pixel coordinates of the object in image A
+    xy_A : list-like of length 2
+        The (x,y) values of the object detected in image A
         
-    Y_vals : np.ndarray
-        The possible physical Y values of the object's 3-D location for which 
-        to compute the associated image B locations
-        
+    Y_vals : 1-d np.ndarray
+        The physical Y values for which to calculate the pixel locations in 
+        image B.
+
     Returns
-    -----------
-    xy_b_vals : np.array
-        A numpy array of shape (len(Y_vals),2), giving the pixel x,y values of 
-        the image location in image B for each possible physcial Y location
+    -------
+    
+    xy_b_vals : 2-d np.ndarray
+        The (x,y) pixel values corresponding to the object's image location in 
+        image B if it were physically at the corresponding Y value.
     '''
     
     # corresponding XYZ values
