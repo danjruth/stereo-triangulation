@@ -179,6 +179,28 @@ def get_image_XYZ_coords(x_px,y_px,calib,XYZ_ref,xy_ref):
     return xyz_im
 
 def find_epipolar_line_given_otherpx(calib_A,calib_B,xy_A,Y_vals):
+    '''
+    Find the pixel values in image B along which the image of an object
+    detected in image A may lie.
+    
+    Parameters
+    -----------
+    calib_A,calib_B : CameraCalibration
+        The two camera calibrations
+        
+    xy_A : list-like
+        The [x,y] pixel coordinates of the object in image A
+        
+    Y_vals : np.ndarray
+        The possible physical Y values of the object's 3-D location for which 
+        to compute the associated image B locations
+        
+    Returns
+    -----------
+    xy_b_vals : np.array
+        A numpy array of shape (len(Y_vals),2), giving the pixel x,y values of 
+        the image location in image B for each possible physcial Y location
+    '''
     
     # corresponding XYZ values
     XYZ_vals = calib_A(xy_A[0],xy_A[1],Y_vals) # of line that corresponds to pixel in view A
