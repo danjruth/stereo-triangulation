@@ -7,17 +7,51 @@ Created on Wed May 12 10:43:43 2021
 
 import numpy as np
 import matplotlib.pyplot as plt
-from toolkit.cameras import basler
 from stereo.camera import calibration, CameraCalibration
 from matplotlib.widgets import Slider, Button, RadioButtons, TextBox
 from matplotlib.patches import Rectangle, Ellipse
 import os
 import pandas as pd
 
-base_folder = r'L:\DWWE\calibration\bulkstereo\\stereo_calibration_20210605_A\\'
-camera_name = '40026941'
-
 class CameraCalibrationGUI:
+    '''
+    A graphical user interface to carry out the camera calibration for one
+    camera. The calibration images should be stored as followed:
+        
+        BASE_FOLDER\
+            CAMERA_A\
+                (images of the calibration target at various y positions as
+                 viewed by the camera named CAMERA_A, each named like
+                 y_xmm.tif, where x is the y position in mm)
+            CAMERA_B\
+                (images of the calibration target at various y positions as
+                 viewed by the camera named CAMERA_B, each named like
+                 y_xmm.tif, where x is the y position in mm)
+                
+    Call this GUI once for each camera, specifying the path to BASE_FOLDER as
+    the first argument and the name of the camera as the second.
+    
+    The code will find all the calibration images listed in
+    BASE_FOLDER\camera_name\ and initially list them under "INCOMPLETE".
+    
+    For each image to calibrate with, enter the filename (without the
+    extension) and the corresponding y position (in mm), and hit "Calibrate".
+    
+    Starting with the bottom left of the image (should be most negative x and 
+    z calibration points), click on a grid of the calibration points going from
+    left to right and then bottom to top, typically ~25 points per image. The 
+    points will be refined to the darkest part of the image within 10 pixels of
+    the clicked point.
+    
+    Then enter the x values and z values, in cm, in order, and hit "Done". This
+    saves the clicked image points and corresponding physical points in a
+    DataFrame saved at BASE_FOLDER\camera_name\image_name.pkl and moves the
+    camera name to the "COMPLETE" list.
+    
+    To aggregate the data from the images in the "COMPLETE" list, hit "Create
+    calibration object", which aggreates them into a DataFrame saved at
+    BASE_FOLDER\camera_name.pkl
+    '''
     
     def __init__(self,base_folder,camera_name):
         
@@ -184,6 +218,3 @@ class CameraCalibrationGUI:
         fpath_save = self.base_folder+self.camera_name + '.pkl'
         self.calib.to_dict(fpath_save=fpath_save)
         self.message('Saved CameraCalibration to '+fpath_save)
-        
-c = CameraCalibrationGUI(base_folder,camera_name)
-
