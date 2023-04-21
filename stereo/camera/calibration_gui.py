@@ -12,6 +12,7 @@ from matplotlib.widgets import Slider, Button, RadioButtons, TextBox
 from matplotlib.patches import Rectangle, Ellipse
 import os
 import pandas as pd
+import scipy.ndimage
 
 class CameraCalibrationGUI:
     '''
@@ -53,7 +54,9 @@ class CameraCalibrationGUI:
     BASE_FOLDER\camera_name.pkl
     '''
     
-    def __init__(self,base_folder,camera_name):
+    def __init__(self,base_folder,camera_name,extension='.tiff'):
+        
+        self.extension = extension
         
         self.base_folder = base_folder
         self.camera_name = camera_name
@@ -128,7 +131,7 @@ class CameraCalibrationGUI:
     
     def update_folder_view(self,_):
         
-        im_files = [f[:-5] for f in os.listdir(self.folder) if f[-5:]=='.tiff']
+        im_files = [f[:-len(self.extension)] for f in os.listdir(self.folder) if f[-len(self.extension):]==self.extension]
         self.complete_files = [f[:-4] for f in os.listdir(self.folder) if f[-4:]=='.pkl']
         self.incomplete_files = [f for f in im_files if f not in self.complete_files]
         
@@ -147,15 +150,18 @@ class CameraCalibrationGUI:
         self.ax_folder.text(0.05,0.95,s_incomplete,color='r',transform=self.ax_folder.transAxes,horizontalalignment='left',verticalalignment='top')
         self.ax_folder.text(0.55,0.95,s_complete,color='g',transform=self.ax_folder.transAxes,horizontalalignment='left',verticalalignment='top')
 
-    def input_calib_points(self,im_extension='.tiff',rot=False,invert=False,refine='automatic',box_size=10):
+    def input_calib_points(self,rot=False,invert=False,refine='automatic',box_size=10,):
         '''
         Manually click on points in a calibration image and enter their
         coordinates.
         '''
         
         # read in the image
-        im = plt.imread(self.folder+self.current_fname+im_extension)
+        im = plt.imread(self.folder+self.current_fname+self.extension).astype(float)
         self.im_shape = np.shape(im)
+        
+        # highpass filter
+        im = im - scipy.ndimage.gaussian_filter(im,(5,5))
         
         # calculate the value of y
         
@@ -165,11 +171,20 @@ class CameraCalibrationGUI:
         # have the user click on the points
         ax = self.ax_im
         ax.clear()
-        ax.imshow(im,cmap='gray') # ,vmin=0,vmax=255    
+        ax.imshow(im,cmap='gray',vmin=-30,vmax=5) # ,vmin=0,vmax=255    
         ax.set_axis_off()
         ax.set_title(self.current_fname)
-        plt.sca(ax)
-        points = np.array(plt.ginput(timeout=-1,n=-1))
+        #plt.sca(ax)
+        #self.fig.canvas.draw()
+        fig_new,ax_new = plt.subplots()
+        ax_new.imshow(im,cmap='gray',vmin=-30,vmax=5)
+        #plt.sca(ax_new)
+        plt.pause(1)
+        print('start clicking on points...')
+        pts_click = plt.ginput(n=-1,timeout=-1)
+        points = np.array(pts_click)
+        print('...done!')
+        plt.close(fig_new)
         
         self.points = np.array([calibration._refine_click_point_auto(im,pt,box_size=box_size) for pt in points])          
         ax.plot(self.points[:,0],self.points[:,1],'x',color='b')

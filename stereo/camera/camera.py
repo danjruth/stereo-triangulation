@@ -435,6 +435,7 @@ def calib_from_folder(folder,y_strs_mm,im_shape_yx,**kwargs):
     store in.
     '''    
     dfs = pd.concat([pd.read_pickle(folder+'y_'+y+'mm.pkl') for y in y_strs_mm])
+    dfs = dfs.sort_values('Y')
     calib = CameraCalibration(dfs[['X','Y','Z']],dfs[['x','y']],im_shape_yx,**kwargs)
     return calib
             

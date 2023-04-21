@@ -47,28 +47,30 @@ def _refine_click_point_manual(im,click,box_size=10,):
     plt.close(fig)
     return point
 
-def input_calib_points(folder,y_str_mm,im_extension='png',rot=False,invert=False,refine='automatic',box_size=10):
+def input_calib_points(folder,fname,yval_mm,im_extension='.tif',rot=False,invert=False,refine='none',box_size=10,vmin=-30,vmax=5):
     '''
     Manually click on points in a calibration image and enter their
     coordinates.
     '''
     
     # read in the image
-    im = plt.imread(folder+'y_'+str(y_str_mm)+'mm.'+im_extension)
+    im = plt.imread(folder+fname+im_extension).astype(float)
     if rot:
         im = np.rot90(im)
     if invert:
         im = np.max(im)-im
+        
+    im = im - scipy.ndimage.gaussian_filter(im,(5,5))
     
     # calculate the value of y
-    y = float(y_str_mm)/1000
+    y = float(yval_mm)/1000
     
     print('Click on the points in a grid.')
     print('Start at the bottom left, then work right then up.')
     
     # have the user click on the points
     fig,ax=plt.subplots(figsize=(13,11))
-    ax.imshow(im,cmap='gray') # ,vmin=0,vmax=255    
+    ax.imshow(im,cmap='gray',vmin=vmin,vmax=vmax) # ,vmin=0,vmax=255    
     ax.set_axis_off()
     fig.tight_layout()
     points = np.array(plt.ginput(timeout=-1,n=-1))
@@ -94,7 +96,7 @@ def input_calib_points(folder,y_str_mm,im_extension='png',rot=False,invert=False
     df['Y'] = y
     
     # save the dataframe
-    fpath_save = folder+'y_'+str(y_str_mm)+'mm.pkl'
+    fpath_save = folder+'y_'+str(yval_mm)+'mm.pkl'
     df.to_pickle(fpath_save)
     
     return df
