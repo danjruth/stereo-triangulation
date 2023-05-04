@@ -27,6 +27,7 @@ def _refine_click_point_auto(im,click,box_size=10,rescale_factor=5):
     
     # refine the point and convert back to original scaling
     pt_refined_region_rescale = np.flip(np.unravel_index(im_region_rescale_filt.argmin(), im_region_rescale_filt.shape)) # x,y
+    
     pt_refined_region = pt_refined_region_rescale/rescale_factor # x,y    
     pt_refined = pt_refined_region + point_int - box_size
     
@@ -47,7 +48,7 @@ def _refine_click_point_manual(im,click,box_size=10,):
     plt.close(fig)
     return point
 
-def input_calib_points(folder,fname,yval_mm,im_extension='.tif',rot=False,invert=False,refine='none',box_size=10,vmin=-30,vmax=5):
+def input_calib_points(folder,fname,yval_mm,im_extension='.tif',rot=False,invert=False,refine='auto',box_size=4,vmin=-30,vmax=5,highpass_size=9,lowpass_size=1):
     '''
     Manually click on points in a calibration image and enter their
     coordinates.
@@ -60,7 +61,8 @@ def input_calib_points(folder,fname,yval_mm,im_extension='.tif',rot=False,invert
     if invert:
         im = np.max(im)-im
         
-    im = im - scipy.ndimage.gaussian_filter(im,(5,5))
+    im = im - scipy.ndimage.gaussian_filter(im,highpass_size)
+    im = scipy.ndimage.gaussian_filter(im,lowpass_size)
     
     # calculate the value of y
     y = float(yval_mm)/1000
@@ -74,6 +76,7 @@ def input_calib_points(folder,fname,yval_mm,im_extension='.tif',rot=False,invert
     ax.set_axis_off()
     fig.tight_layout()
     points = np.array(plt.ginput(timeout=-1,n=-1))
+    ax.plot(points[:,0],points[:,1],'x',color='r')
     
     # refine the points
     if refine=='automatic' or refine=='auto':
@@ -82,6 +85,9 @@ def input_calib_points(folder,fname,yval_mm,im_extension='.tif',rot=False,invert
         points = np.array([_refine_click_point_manual(im,pt,box_size=box_size) for pt in points])
                 
     ax.plot(points[:,0],points[:,1],'x',color='b')
+    plt.show()
+    fig.canvas.draw()
+    plt.show()
     
     # store the x and y locs in a dataframe
     df = pd.DataFrame()
