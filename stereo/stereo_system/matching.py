@@ -231,6 +231,9 @@ class Matcher:
         diameter_diffs = self.diameter_diffs
         df_A = self.df_A
         df_B = self.df_B
+        
+        print(mask)
+        print(errs)
                 
         def _nan_pairs(_1,_2):
             '''
@@ -248,9 +251,12 @@ class Matcher:
             if np.nansum(mask[aii,:])==1:
                 bii = np.squeeze(np.argwhere(np.atleast_1d(mask[aii,:])==1))
                 if np.nansum(mask[:,bii])==1:
-                    pairs_i.append((aii,bii))
+                    pairs_i.append((int(aii),int(bii)))
+                    print((int(aii),int(bii)))
+                    print('-------')
                     _nan_pairs(aii,bii)
         
+        print(pairs_i)
             
         # pair the ones that are each other's min for both dist and size error
         for aii in [aii for aii in range(len(df_A)) if not (aii in np.atleast_2d(pairs_i)[:,0]) and ~np.all(np.isnan(errs[aii,:]))]:
@@ -278,6 +284,8 @@ class Matcher:
             if aii==aii_of_bii and ~np.isnan(mask[aii,bii]) and not (bii in np.atleast_2d(pairs_i)[:,1]):
                 pairs_i.append((aii,bii))
                 _nan_pairs(aii,bii)
+                
+        print(pairs_i)
                                     
         # make a list of the pairs by the dataframe index
         pairs = []
@@ -308,7 +316,7 @@ class Matcher:
             if self.params['epipolar_dist_thresh_px'] is not None:
                 self.df.loc[j,'dist_to_epipolar'] = self.dists_to_epipolar[aii,bii]
             for suffix,df_use,i in zip(['A','B'],[self.df_A,self.df_B],[0,1]):
-                for prop in props_2d:
+                for prop in [p for p in props_2d if p in df_use.columns]:
                     self.df.loc[j,prop+'_'+suffix] = df_use.loc[pair[i],prop]
                 self.df.loc[j,'ix'+suffix] = pair[i]
                 self.df.loc[j,'dx_'+suffix] = self.dx_AB[aii,bii,i]
@@ -398,7 +406,7 @@ def match_multiple_frames(df_A,df_B,ss,frames=None,params={},n_threads=1):
     
     '''
     if frames is None:
-        frames = df_A['frames'].unique().values
+        frames = df_A['frame'].unique()#.values
     
     def match_frame(f):
         print('...matching frame '+str(f))

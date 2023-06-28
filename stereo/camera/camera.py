@@ -178,6 +178,7 @@ class CameraCalibration:
         else:
             newfig = False
         
+        # each row corresponds to either x or z errors
         for row_i, comp_i, phys_dir in zip([0,1],[0,2],['X','Z']):
         
             # known vs interpolated within the planes
